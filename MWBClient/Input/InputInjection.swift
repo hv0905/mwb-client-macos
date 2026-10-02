@@ -21,16 +21,41 @@ final class InputInjection {
     /// rather than posting a relative delta.
     private var needsWarp = true
 
+    /// Currently held mouse buttons, used to type move events as drags.
+    private var leftDown = false
+    private var rightDown = false
+    private var otherDown = false
+
     /// PowerToys MOVE_MOUSE_RELATIVE threshold. When |X| and |Y| both
     /// exceed this value, coordinates represent a relative pixel offset.
     private static let moveMouseRelative: Int32 = 100_000
+
+    // MARK: - Keyboard state
+
+    /// macOS keycodes for the modifier keys handled via `.flagsChanged` synthesis.
+    static let modifierKeycodes: Set<UInt16> = [
+        0x38, 0x3C,  // Left/Right Shift
+        0x3B, 0x3E,  // Left/Right Control
+        0x3A, 0x3D,  // Left/Right Option
+        0x37, 0x36,  // Left/Right Command
+    ]
+
+    /// macOS keycode for Caps Lock.
+    static let capsLockKeycode: UInt16 = 0x39
+
+    /// Modifier keycodes currently held down by injected events.
+    private(set) var heldModifiers: Set<UInt16> = []
+
+    /// Local Caps Lock state synthesized from remote toggles. Not synced with
+    /// the remote machine (matches the reference implementation).
+    private var capsLockOn = false
 
     // MARK: - Coordinate mapping
 
     /// Returns the main display bounds in Quartz (top-left origin) coordinates.
     /// CGEvent uses Quartz coordinates, not NSScreen (bottom-left origin).
     var screenBoundsProvider: () -> CGRect = { NSScreen.fullDesktopBounds }
-    
+
     private var mainScreenBounds: CGRect {
         screenBoundsProvider()
     }
@@ -90,16 +115,22 @@ final class InputInjection {
         case .mouseMove:
             handleMouseMove(to: target)
         case .lButtonDown:
+            leftDown = true
             postMouseButtonEvent(.leftMouseDown, at: target)
         case .lButtonUp:
+            leftDown = false
             postMouseButtonEvent(.leftMouseUp, at: target)
         case .rButtonDown:
+            rightDown = true
             postMouseButtonEvent(.rightMouseDown, at: target)
         case .rButtonUp:
+            rightDown = false
             postMouseButtonEvent(.rightMouseUp, at: target)
         case .mButtonDown:
+            otherDown = true
             postMouseButtonEvent(.otherMouseDown, at: target, button: .center)
         case .mButtonUp:
+            otherDown = false
             postMouseButtonEvent(.otherMouseUp, at: target, button: .center)
         case .mouseWheel:
             handleScrollWheel(delta: data.wheelDelta, at: target, horizontal: false)
@@ -110,6 +141,24 @@ final class InputInjection {
 
     // MARK: - Mouse helpers
 
+    /// The CGEventType for a move event given the held buttons. macOS only
+    /// delivers drags to apps when the event is typed as a drag; a plain
+    /// `.mouseMoved` while a button is held is ignored by most apps.
+    static func moveEventType(left: Bool, right: Bool, other: Bool) -> CGEventType {
+        if left { return .leftMouseDragged }
+        if right { return .rightMouseDragged }
+        if other { return .otherMouseDragged }
+        return .mouseMoved
+    }
+
+    private static func button(for type: CGEventType) -> CGMouseButton {
+        switch type {
+        case .rightMouseDragged: return .right
+        case .otherMouseDragged: return .center
+        default: return .left
+        }
+    }
+
     private func handleMouseMove(to target: CGPoint) {
         if needsWarp {
             warpCursor(to: target)
@@ -119,11 +168,13 @@ final class InputInjection {
         let dx = target.x - lastPosition.x
         let dy = target.y - lastPosition.y
 
+        let type = Self.moveEventType(left: leftDown, right: rightDown, other: otherDown)
+
         guard let event = CGEvent(
             mouseEventSource: nil,
-            mouseType: .mouseMoved,
+            mouseType: type,
             mouseCursorPosition: target,
-            mouseButton: .left
+            mouseButton: Self.button(for: type)
         ) else {
             mwbError(MWBLog.input, "Failed to create mouse move CGEvent")
             return
@@ -144,11 +195,13 @@ final class InputInjection {
         let location = CGPoint(x: current.x, y: screen_height - current.y)
         let target = CGPoint(x: location.x + dx, y: location.y + dy)
 
+        let type = Self.moveEventType(left: leftDown, right: rightDown, other: otherDown)
+
         guard let event = CGEvent(
             mouseEventSource: nil,
-            mouseType: .mouseMoved,
+            mouseType: type,
             mouseCursorPosition: target,
-            mouseButton: .left
+            mouseButton: Self.button(for: type)
         ) else {
             mwbError(MWBLog.input, "Failed to create relative mouse CGEvent")
             return
@@ -190,6 +243,14 @@ final class InputInjection {
         lastPosition = location
     }
 
+    /// Converts a raw MWB wheel delta (multiples of 120) to macOS pixel scroll
+    /// units, optionally inverting the direction.
+    static func scrollPixels(delta: Int32, invert: Bool) -> Int32 {
+        var pixels = Int32((CGFloat(delta) / 120.0) * 3.0)
+        if invert { pixels = -pixels }
+        return pixels
+    }
+
     private func handleScrollWheel(delta: Int32, at location: CGPoint, horizontal: Bool) {
         if needsWarp {
             warpCursor(to: location)
@@ -198,7 +259,7 @@ final class InputInjection {
         // MWB sends +/-120 per notch (WHEEL_DELTA). Convert to pixel scroll.
         // macOS convention: positive = scroll up / scroll left.
         // WHEEL_DELTA positive in MWB = scroll away from user = scroll up (negative Y in macOS).
-        let pixelDelta = Int32(CGFloat(delta) / 120.0 * 3.0)
+        let pixelDelta = Self.scrollPixels(delta: delta, invert: CachedSettings.invertRemoteScroll)
 
         guard let event = CGEvent(
             scrollWheelEvent2Source: nil,
@@ -218,30 +279,124 @@ final class InputInjection {
 
     // MARK: - Keyboard injection
 
+    /// Computes the full CGEventFlags for a modifier state, matching how macOS
+    /// reports flags on real hardware events. Never synthesizes Fn or
+    /// numeric-pad state.
+    static func modifierFlags(held: Set<UInt16>, capsLockOn: Bool) -> CGEventFlags {
+        var flags: CGEventFlags = []
+        if held.contains(0x38) || held.contains(0x3C) { flags.insert(.maskShift) }
+        if held.contains(0x3B) || held.contains(0x3E) { flags.insert(.maskControl) }
+        if held.contains(0x3A) || held.contains(0x3D) { flags.insert(.maskAlternate) }
+        if held.contains(0x37) || held.contains(0x36) { flags.insert(.maskCommand) }
+        if capsLockOn { flags.insert(.maskAlphaShift) }
+        return flags
+    }
+
+    /// The full modifier flags for the currently synthesized state.
+    var currentModifierFlags: CGEventFlags {
+        Self.modifierFlags(held: heldModifiers, capsLockOn: capsLockOn)
+    }
+
     /// Injects a keyboard event based on MWB KeyboardData.
     ///
-    /// Maps the Windows VK code to a macOS keycode via ``KeyCodeMapper``
-    /// and posts a key down or key up event. Unmapped VK codes are silently
+    /// Maps the Windows VK code to a macOS keycode via ``KeyCodeMapper`` and
+    /// posts either a key event (carrying the full modifier state in its flags,
+    /// so shortcuts like Ctrl+C resolve in the target app) or a well-formed
+    /// `.flagsChanged` event for modifier keys. Unmapped VK codes are silently
     /// ignored.
-    func injectKeyboard(_ data: KeyboardData) {
-        guard let macOSKeycode = KeyCodeMapper.vkToMacOS(vkCode: data.vkCode) else {
+    ///
+    /// - Parameter swapOptionCommand: When true, Option and Command keycodes
+    ///   are swapped after the table lookup (for keyboards laid out
+    ///   Ctrl-Win-Alt instead of Ctrl-Opt-Cmd).
+    func injectKeyboard(_ data: KeyboardData, swapOptionCommand: Bool = false) {
+        guard var keycode = KeyCodeMapper.vkToMacOS(vkCode: data.vkCode) else {
             mwbDebug(MWBLog.input, "Inject keyboard: unmapped VK code \(data.vkCode)")
+            return
+        }
+
+        if swapOptionCommand {
+            keycode = KeyCodeMapper.swappedModifierKeycode(keycode)
+        }
+
+        if keycode == Self.capsLockKeycode {
+            // Caps Lock behaves as a toggle: each key down flips the lock
+            // state; key ups are ignored (matches hardware semantics).
+            guard !data.isKeyUp else { return }
+            capsLockOn.toggle()
+            postFlagsChanged(keycode: keycode, keyDown: true)
+            return
+        }
+
+        if Self.modifierKeycodes.contains(keycode) {
+            let keyDown = !data.isKeyUp
+            if keyDown {
+                heldModifiers.insert(keycode)
+            } else {
+                heldModifiers.remove(keycode)
+            }
+            postFlagsChanged(keycode: keycode, keyDown: keyDown)
             return
         }
 
         guard let event = CGEvent(
             keyboardEventSource: nil,
-            virtualKey: macOSKeycode,
+            virtualKey: keycode,
             keyDown: !data.isKeyUp
         ) else {
-            mwbError(MWBLog.input, "Failed to create keyboard CGEvent for keycode \(macOSKeycode)")
+            mwbError(MWBLog.input, "Failed to create keyboard CGEvent for keycode \(keycode)")
             return
         }
 
         // Set the keycode explicitly (redundant with virtualKey but ensures correctness)
-        event.setIntegerValueField(.keyboardEventKeycode, value: Int64(macOSKeycode))
+        event.setIntegerValueField(.keyboardEventKeycode, value: Int64(keycode))
 
+        event.flags = currentModifierFlags
         event.post(tap: .cghidEventTap)
+    }
+
+    /// Posts a well-formed `.flagsChanged` event for a modifier transition.
+    ///
+    /// `heldModifiers` / `capsLockOn` must already reflect the post-transition
+    /// state so `event.flags` matches what macOS would generate for the same
+    /// physical key press. Posting an explicit `.flagsChanged` event with
+    /// explicit flags (instead of a bare keyDown on a modifier keycode) keeps
+    /// the system modifier state consistent.
+    private func postFlagsChanged(keycode: UInt16, keyDown: Bool) {
+        let held = heldModifiers
+            .sorted()
+            .map { String(format: "0x%02X", $0) }
+            .joined(separator: ",")
+        mwbDebug(
+            MWBLog.input,
+            "Modifier transition: keycode \(String(format: "0x%02X", keycode)) \(keyDown ? "down" : "up"), held=[\(held)], capsLock=\(capsLockOn)")
+
+        guard let event = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: keycode,
+            keyDown: keyDown
+        ) else {
+            mwbError(MWBLog.input, "Failed to create flagsChanged CGEvent for keycode \(keycode)")
+            return
+        }
+
+        event.type = .flagsChanged
+        event.flags = currentModifierFlags
+        event.post(tap: .cghidEventTap)
+    }
+
+    /// Releases every modifier currently held down by injected events.
+    ///
+    /// Mirrors the reference `ReleaseAllKeys()`: called when this machine
+    /// loses control (HideMouse path, crossing end, connection loss) so the
+    /// local session is not left with stuck modifiers. Caps Lock state is
+    /// intentionally preserved (hardware toggle semantics).
+    func releaseAllKeys() {
+        guard !heldModifiers.isEmpty else { return }
+        mwbInfo(MWBLog.input, "Releasing \(heldModifiers.count) held modifier(s)")
+        while let keycode = heldModifiers.first {
+            heldModifiers.remove(keycode)
+            postFlagsChanged(keycode: keycode, keyDown: false)
+        }
     }
 
     // MARK: - Reset
@@ -251,6 +406,7 @@ final class InputInjection {
     /// Should be called when a crossing ends or the connection is lost,
     /// so the next incoming event will trigger a cursor warp.
     func reset() {
+        releaseAllKeys()
         lastPosition = .zero
         needsWarp = true
     }

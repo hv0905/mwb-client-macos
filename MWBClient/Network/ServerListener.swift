@@ -39,16 +39,19 @@ actor ServerListener {
     var onMouse: MouseCallback?
     var onKeyboard: KeyboardCallback?
     var onClipboard: ClipboardCallback?
+    var onMachineEvent: MachineEventCallback?
 
-    /// Sets all three callbacks in a single actor-isolated call.
+    /// Sets all callbacks in a single actor-isolated call.
     func setCallbacks(
         onMouse: MouseCallback?,
         onKeyboard: KeyboardCallback?,
-        onClipboard: ClipboardCallback?
+        onClipboard: ClipboardCallback?,
+        onMachineEvent: MachineEventCallback? = nil
     ) {
         self.onMouse = onMouse
         self.onKeyboard = onKeyboard
         self.onClipboard = onClipboard
+        self.onMachineEvent = onMachineEvent
     }
 
     // MARK: Init
@@ -506,17 +509,10 @@ actor ServerListener {
             respondToHeartbeat(packet, connection: connection, crypto: crypto, magicHash: magicHash, machineID: handler.adoptedMachineID)
             return true
 
-        case .explorerDragDrop:
-            Task { @MainActor in
-                DragDropManager.shared.handleExplorerDragDropRequest()
-            }
-            return true
-            
-        case .clipboardDragDrop:
-            Task { @MainActor in
-                DragDropManager.shared.handleRemoteDragAnnounced()
-            }
-            return true
+        case .explorerDragDrop, .clipboardDragDrop:
+            // Routed to onMachineEvent via dispatchPacket (handled by the
+            // coordinator); no longer consumed inline.
+            return false
 
         default:
             return false
@@ -632,8 +628,12 @@ actor ServerListener {
             }
 
         case .clipboard, .clipboardText, .clipboardImage, .clipboardDataEnd,
-             .clipboardAsk, .clipboardPush, .clipboardDragDrop, .clipboardDragDropEnd:
+             .clipboardAsk, .clipboardPush:
             onClipboard?(packet)
+
+        case .explorerDragDrop, .clipboardDragDrop, .clipboardDragDropEnd,
+             .clipboardDragDropOperation, .machineSwitched, .hideMouse:
+            onMachineEvent?(packet)
 
         case .byeBye:
             mwbInfo(MWBLog.network,"Received ByeBye packet, disconnecting")
