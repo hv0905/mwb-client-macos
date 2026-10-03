@@ -335,6 +335,10 @@ actor ServerListener {
     // MARK: Noise Exchange (Outbound — same order as NetworkManager)
 
     private func exchangeNoiseOutbound(_ conn: NWConnection, crypto: MWBCrypto) async throws {
+        // Send the 32-byte cleartext salt+IV stream header first
+        // (PowerToys v0.101.2211+: Encryption.GetEncryptedStream)
+        try await conn.send(content: crypto.makeOutboundHeader())
+
         // Send 16 bytes of random encrypted data
         var randomNoise = Data(count: MWBConstants.noiseSize)
         randomNoise.withUnsafeMutableBytes { ptr in
@@ -342,6 +346,18 @@ actor ServerListener {
         }
         let encryptedNoise = crypto.encrypt(padToBlock(randomNoise))
         try await conn.send(content: encryptedNoise)
+
+        // Receive the peer's 32-byte cleartext salt+IV stream header
+        // (PowerToys v0.101.2211+: Encryption.GetDecryptedStream)
+        guard
+            let headerData = try await conn.receive(
+                minimumIncompleteLength: MWBConstants.streamHeaderSize,
+                maximumLength: MWBConstants.streamHeaderSize),
+            headerData.count == MWBConstants.streamHeaderSize
+        else {
+            throw NetworkError.handshakeFailed("short encryption header")
+        }
+        crypto.processInboundHeader(headerData)
 
         // Receive 16 bytes of noise
         let receivedNoise = try await conn.receive(

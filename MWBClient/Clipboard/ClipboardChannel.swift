@@ -399,6 +399,10 @@ actor ClipboardChannel {
         ourType: UInt8,
         postAction: ClipboardPostAction
     ) async throws -> PeerInfo {
+        // 0. Send the 32-byte cleartext salt+IV stream header first
+        //    (PowerToys v0.101.2211+: Encryption.GetEncryptedStream).
+        try await connection.send(content: crypto.makeOutboundHeader())
+
         // 1. Send our random block.
         var noise = Data(count: MWBConstants.noiseSize)
         _ = noise.withUnsafeMutableBytes { ptr in
@@ -414,7 +418,19 @@ actor ClipboardChannel {
         packet.setDataUInt32(postAction.rawValue, at: 0)
         try await connection.send(content: crypto.encrypt(packet.transmittedData))
 
-        // 3. Receive the peer's random block (discarded).
+        // 3. Receive the peer's 32-byte cleartext salt+IV stream header
+        //    (PowerToys v0.101.2211+: Encryption.GetDecryptedStream).
+        guard
+            let peerStreamHeader = try await connection.receive(
+                minimumIncompleteLength: MWBConstants.streamHeaderSize,
+                maximumLength: MWBConstants.streamHeaderSize),
+            peerStreamHeader.count == MWBConstants.streamHeaderSize
+        else {
+            throw ChannelError.handshakeFailed("short encryption header")
+        }
+        crypto.processInboundHeader(peerStreamHeader)
+
+        // 4. Receive the peer's random block (discarded).
         guard
             let peerNoise = try await connection.receive(
                 minimumIncompleteLength: MWBConstants.noiseSize,
@@ -425,7 +441,7 @@ actor ClipboardChannel {
         }
         _ = crypto.decrypt(peerNoise)
 
-        // 4. Receive the peer's header packet.
+        // 5. Receive the peer's header packet.
         guard
             let peerHeader = try await connection.receive(
                 minimumIncompleteLength: MWBConstants.bigPacketSize,
