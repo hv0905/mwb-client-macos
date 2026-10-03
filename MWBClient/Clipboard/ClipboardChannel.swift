@@ -264,9 +264,29 @@ actor ClipboardChannel {
         let reset = onConnectionAccepted
         let task = Task { [weak self] in
             await reset?()
-            await self?.runConnection(connection, ourType: PackageType.clipboardPush.rawValue, postAction: .other)
+            await self?.runConnection(
+                connection,
+                ourType: PackageType.clipboardPush.rawValue,
+                postAction: .other,
+                role: .server)
         }
         connectionTasks.append(task)
+    }
+
+    /// Who drives the transfer on a clipboard-channel connection. The
+    /// direction of an OUTBOUND connection is fixed by our intent and must
+    /// not be inferred from the peer's handshake type: the reference server
+    /// always announces `ClipboardPush` (79) initially (its `clientPushData`
+    /// starts true), so a pusher reading 79 would wrongly try to receive.
+    /// Only the server infers the direction from the peer's type (69 = the
+    /// peer pulls, 79 = the peer pushes).
+    private enum TransferRole {
+        /// Outbound pull: the remote serves, we receive.
+        case puller
+        /// Outbound push (ClipboardAsk response): we serve our staged data.
+        case pusher
+        /// Inbound connection: the peer's handshake type decides.
+        case server
     }
 
     // MARK: - Outbound connections (Mac pulls or pushes)
@@ -274,17 +294,21 @@ actor ClipboardChannel {
     /// Pulls the remote machine's large clipboard data. Our handshake type is
     /// 69 (`Clipboard`); the remote answers 79 and sends the data.
     func pull(postAction: ClipboardPostAction) async {
-        await runOutboundConnection(ourType: PackageType.clipboard.rawValue, postAction: postAction)
+        await runOutboundConnection(
+            ourType: PackageType.clipboard.rawValue, postAction: postAction, role: .puller)
     }
 
     /// Serves our staged clipboard data to the remote machine. Used when the
     /// remote sends `ClipboardAsk` (78) and cannot connect to us directly:
-    /// we connect out with handshake type 79 (`ClipboardPush`) and send.
-    func pushPendingData() async {
-        await runOutboundConnection(ourType: PackageType.clipboardPush.rawValue, postAction: .other)
+    /// we connect out with handshake type 79 (`ClipboardPush`) and send,
+    /// echoing the ask's post action (reference `PackageType.ClipboardAsk`
+    /// handler passes `package.PostAction` through to `ShakeHand`).
+    func pushPendingData(postAction: ClipboardPostAction) async {
+        await runOutboundConnection(
+            ourType: PackageType.clipboardPush.rawValue, postAction: postAction, role: .pusher)
     }
 
-    private func runOutboundConnection(ourType: UInt8, postAction: ClipboardPostAction) async {
+    private func runOutboundConnection(ourType: UInt8, postAction: ClipboardPostAction, role: TransferRole) async {
         guard !remoteHost.isEmpty else {
             mwbWarning(MWBLog.clipboard, "Clipboard channel: no remote host, skipping \(ourType == PackageType.clipboard.rawValue ? "pull" : "push")")
             return
@@ -301,7 +325,8 @@ actor ClipboardChannel {
 
         do {
             try await Self.waitForReady(connection)
-            let weServed = try await runHandshakeAndTransfer(connection, ourType: ourType, postAction: postAction)
+            let weServed = try await runHandshakeAndTransfer(
+                connection, ourType: ourType, postAction: postAction, role: role)
             if weServed {
                 // We sent the data: wait for the peer's close so everything
                 // is delivered before cancel() (reference Socket.Close(10)
@@ -315,11 +340,12 @@ actor ClipboardChannel {
 
     // MARK: - Connection handling
 
-    private func runConnection(_ connection: NWConnection, ourType: UInt8, postAction: ClipboardPostAction) async {
+    private func runConnection(_ connection: NWConnection, ourType: UInt8, postAction: ClipboardPostAction, role: TransferRole) async {
         connection.start(queue: .global(qos: .userInitiated))
         defer { connection.cancel() }
         do {
-            let weServed = try await runHandshakeAndTransfer(connection, ourType: ourType, postAction: postAction)
+            let weServed = try await runHandshakeAndTransfer(
+                connection, ourType: ourType, postAction: postAction, role: role)
             if weServed {
                 await waitForPeerClose(connection, timeout: Self.closeTimeout)
             }
@@ -334,18 +360,30 @@ actor ClipboardChannel {
     private func runHandshakeAndTransfer(
         _ connection: NWConnection,
         ourType: UInt8,
-        postAction: ClipboardPostAction
+        postAction: ClipboardPostAction,
+        role: TransferRole
     ) async throws -> Bool {
         let crypto = MWBCrypto(securityKey: securityKey)
         let peer = try await handshake(connection, crypto: crypto, ourType: ourType, postAction: postAction)
 
-        if peer.isPusher {
-            // Peer pushes data to us; we close as soon as we have it all.
+        switch role {
+        case .pusher:
+            // ClipboardAsk response: we serve unconditionally (reference
+            // always calls SendClipboardData after this handshake).
+            return try await serveTransfer(connection, crypto: crypto)
+        case .puller:
+            // Outbound pull: the remote serves, we receive.
             try await receiveTransfer(connection, crypto: crypto, postAction: peer.postAction)
             return false
-        } else {
-            // Peer pulls data from us.
-            return try await serveTransfer(connection, crypto: crypto)
+        case .server:
+            if peer.isPusher {
+                // Peer pushes data to us; we close as soon as we have it all.
+                try await receiveTransfer(connection, crypto: crypto, postAction: peer.postAction)
+                return false
+            } else {
+                // Peer pulls data from us.
+                return try await serveTransfer(connection, crypto: crypto)
+            }
         }
     }
 

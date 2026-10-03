@@ -199,4 +199,57 @@ final class ClipboardChannelLoopbackTests: XCTestCase {
         await client.pull(postAction: .other)
         await fulfillment(of: [unexpected], timeout: 2.0)
     }
+
+    // MARK: - Push transfer (ClipboardAsk response)
+
+    func testPushDeliversStagedFileToAskingSide() async throws {
+        let (server, port) = try await startServer()
+
+        // ~100 KB, length not a multiple of 32 to exercise padding.
+        var contents = Data()
+        for i in 0..<100_003 {
+            contents.append(UInt8(truncatingIfNeeded: i * 7))
+        }
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mwb-loopback-\(UUID().uuidString).bin")
+        try contents.write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        // The CLIENT stages the data and pushes it (ClipboardAsk response);
+        // the SERVER receives. Proves the outbound-push direction is decided
+        // by intent, not by the peer's always-79 server handshake type.
+        let client = await makeClient(port: port)
+        await client.setPendingData(.file(sourceURL))
+
+        let received = XCTestExpectation(description: "file received by asking side")
+        let box = SendableBox<URL>()
+        let postActionBox = SendableBox<ClipboardPostAction>()
+
+        await server.setCallbacks(
+            onReceivedText: { _ in
+                XCTFail("unexpected text received")
+            },
+            onReceivedImage: { _ in
+                XCTFail("unexpected image received")
+            },
+            onReceivedFile: { url, postAction in
+                box.set(url)
+                postActionBox.set(postAction)
+                received.fulfill()
+ },
+            onConnectionAccepted: nil)
+
+        // Non-default post action proves the pusher echoes it in its
+        // handshake package (reference passes package.PostAction through).
+        await client.pushPendingData(postAction: .mspaint)
+        await fulfillment(of: [received], timeout: 10.0)
+
+        let receivedURL = try XCTUnwrap(box.get())
+        XCTAssertEqual(receivedURL.lastPathComponent, sourceURL.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: receivedURL), contents)
+        XCTAssertEqual(postActionBox.get(), .mspaint)
+
+        // Clean up the file the channel wrote to Application Support.
+        try? FileManager.default.removeItem(at: receivedURL)
+    }
 }

@@ -183,10 +183,11 @@ actor ClipboardManager {
             // Type 78: the remote asks us to push our staged data (it could
             // not connect to our clipboard port directly).
             guard packet.des == machineID else { return }
-            mwbInfo(MWBLog.clipboard, "Received ClipboardAsk from machine \(packet.src.rawValue); pushing staged data")
+            let postAction = ClipboardPostAction(rawValue: packet.dataUInt32(at: 0)) ?? .other
+            mwbInfo(MWBLog.clipboard, "Received ClipboardAsk from machine \(packet.src.rawValue) (postAction=\(postAction.wireName)); pushing staged data")
             let channel = self.channel
             Task {
-                await channel?.pushPendingData()
+                await channel?.pushPendingData(postAction: postAction)
             }
 
         default:
@@ -325,8 +326,11 @@ actor ClipboardManager {
         guard currentCount != lastSentChangeCount else { return }
         guard currentCount > lastWriteChangeCount else { return }
 
-        // Priority: text > image > files
-        if syncText, let contents = readTextFromPasteboard() {
+        // Priority: text > image > files. A pasteboard holding file URLs is
+        // always a file copy (Finder ⌘C also puts the filename as a string
+        // flavor and the file icon as TIFF, which must not win over the file
+        // itself).
+        if syncText, let contents = Self.readText(from: pasteboard) {
             let payload = ClipboardCodec.makeTextPayload(
                 text: contents.text, rtf: contents.rtf, html: contents.html)
             let compressed = ClipboardCodec.compressData(
@@ -388,8 +392,13 @@ actor ClipboardManager {
 
     // MARK: Read from Pasteboard
 
-    private func readTextFromPasteboard() -> (text: String, rtf: String?, html: String?)? {
-        let pasteboard = NSPasteboard.general
+    /// Returns the pasteboard's text content, or nil. A Finder file copy
+    /// exposes the filename as a string flavor alongside the file URL — the
+    /// reference never treats a FileDropList as text, so a file URL here must
+    /// fall through to the file branch. Static + parameterized for
+    /// isolated-pasteboard testing.
+    static func readText(from pasteboard: NSPasteboard) -> (text: String, rtf: String?, html: String?)? {
+        guard pasteboard.types?.contains(.fileURL) != true else { return nil }
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
             return nil
         }

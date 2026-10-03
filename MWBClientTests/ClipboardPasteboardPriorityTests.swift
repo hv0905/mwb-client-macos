@@ -54,4 +54,21 @@ final class ClipboardPasteboardPriorityTests: XCTestCase {
 
         XCTAssertNotNil(ClipboardManager.readImage(from: pasteboard))
     }
+
+    func testFinderFileCopyShapeAlwaysTakesTheFileBranch() throws {
+        let fileURL = try makeImageFileURL()
+
+        // The real Finder ⌘C shape: file URL + filename as string + TIFF
+        // icon (verified against a live Finder copy). All content branches
+        // except the file branch must decline.
+        let pasteboard = NSPasteboard.withUniqueName()
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([fileURL as NSURL]))
+        XCTAssertNotEqual(pasteboard.addTypes([.string], owner: nil), 0)
+        XCTAssertTrue(pasteboard.setString("requirements.txt", forType: .string))
+
+        XCTAssertNil(ClipboardManager.readText(from: pasteboard))   // filename is not the copy's payload
+        XCTAssertNil(ClipboardManager.readImage(from: pasteboard))  // file icon / image file is not the payload
+        XCTAssertEqual(ClipboardManager.readFiles(from: pasteboard), [fileURL])
+    }
 }
