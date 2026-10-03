@@ -1,14 +1,16 @@
 import XCTest
 @testable import MWBClient
 
-/// Proves the clipboard poll priority: a Finder-style file copy (only a file
-/// URL on the pasteboard) must fall through to the file branch, never be
-/// loaded as an image — mirroring the reference, where a FileDropList never
-/// takes the CF_BITMAP branch. All tests use isolated pasteboards
+/// Proves the clipboard poll priority: a Finder file copy (private Finder
+/// markers + file URL + filename text + TIFF icon) must fall through to the
+/// file branch, never be loaded as an image — mirroring the reference, where
+/// a FileDropList never takes the CF_BITMAP branch. A bare file URL from a
+/// screenshot/copy-as-image tool, in contrast, resolves as an image, matching
+/// how macOS apps paste it. All tests use isolated pasteboards
 /// (`NSPasteboard.withUniqueName()`), never `NSPasteboard.general`.
 final class ClipboardPasteboardPriorityTests: XCTestCase {
 
-    /// A 1×1 PNG written to a temp file, the Finder ⌘C shape (file URL only).
+    /// A 1×1 PNG written to a temp file (an image file on disk).
     private func makeImageFileURL() throws -> URL {
         let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
@@ -22,12 +24,20 @@ final class ClipboardPasteboardPriorityTests: XCTestCase {
         return url
     }
 
+    /// The private flavors a real Finder ⌘C file copy carries alongside the
+    /// file URL (verified against a live Finder copy).
+    private let finderMarkers: [NSPasteboard.PasteboardType] = [
+        NSPasteboard.PasteboardType("com.apple.finder.noderef"),
+        NSPasteboard.PasteboardType("fndf"),
+    ]
+
     func testFinderStyleImageFileCopyIsNotInterceptedAsImage() throws {
         let fileURL = try makeImageFileURL()
 
         let pasteboard = NSPasteboard.withUniqueName()
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.writeObjects([fileURL as NSURL]))
+        XCTAssertNotEqual(pasteboard.addTypes(finderMarkers, owner: nil), 0)
 
         // Gate: a file copy is never an image, even though the file itself
         // contains image data NSImage(pasteboard:) would resolve.
@@ -55,6 +65,20 @@ final class ClipboardPasteboardPriorityTests: XCTestCase {
         XCTAssertNotNil(ClipboardManager.readImage(from: pasteboard))
     }
 
+    func testBareFileURLFromImageToolIsReadAsImage() throws {
+        let fileURL = try makeImageFileURL()
+
+        // Screenshot app / "copy as image" shape: a bare file URL with no
+        // Finder markers. Pasting this into an app yields the image content,
+        // so it must be synced as an image, not as a file.
+        let pasteboard = NSPasteboard.withUniqueName()
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([fileURL as NSURL]))
+
+        XCTAssertNotNil(ClipboardManager.readImage(from: pasteboard))
+        XCTAssertTrue(ClipboardManager.isFinderFileCopy(pasteboard) == false)
+    }
+
     func testFinderFileCopyShapeAlwaysTakesTheFileBranch() throws {
         let fileURL = try makeImageFileURL()
 
@@ -64,6 +88,7 @@ final class ClipboardPasteboardPriorityTests: XCTestCase {
         let pasteboard = NSPasteboard.withUniqueName()
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.writeObjects([fileURL as NSURL]))
+        XCTAssertNotEqual(pasteboard.addTypes(finderMarkers, owner: nil), 0)
         XCTAssertNotEqual(pasteboard.addTypes([.string], owner: nil), 0)
         XCTAssertTrue(pasteboard.setString("requirements.txt", forType: .string))
 

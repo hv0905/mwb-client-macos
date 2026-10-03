@@ -407,13 +407,16 @@ actor ClipboardManager {
         return (text, rtf, html)
     }
 
-    /// Returns PNG data for direct image content on the pasteboard, or nil.
-    /// A Finder file copy exposes only a file URL, which NSImage(pasteboard:)
-    /// would otherwise load as an image — the reference never treats a
-    /// FileDropList as CF_BITMAP, so a file URL must fall through to the file
-    /// branch. Static + parameterized for isolated-pasteboard testing.
+    /// Returns PNG data for image content on the pasteboard, or nil.
+    /// A real Finder file copy (⌘C in Finder) also exposes the file's TIFF
+    /// icon, which NSImage(pasteboard:) would load — the reference never
+    /// treats a FileDropList as CF_BITMAP, so Finder-shaped copies must fall
+    /// through to the file branch. Copies from other sources (screenshot
+    /// tools, "copy as image" utilities) expose a bare file URL without the
+    /// Finder markers; those resolve here as images, matching how macOS apps
+    /// paste them. Static + parameterized for isolated-pasteboard testing.
     static func readImage(from pasteboard: NSPasteboard) -> Data? {
-        guard pasteboard.types?.contains(.fileURL) != true else { return nil }
+        guard !Self.isFinderFileCopy(pasteboard) else { return nil }
         guard let image = NSImage(pasteboard: pasteboard) else {
             return nil
         }
@@ -429,6 +432,20 @@ actor ClipboardManager {
         }
 
         return bitmap.representation(using: .png, properties: [:])
+    }
+
+    /// True when the pasteboard carries a Finder ⌘C file copy. Finder marks
+    /// its copies with private flavors (verified against a live Finder copy:
+    /// "com.apple.finder.noderef", "fndf"); programmatic writers of bare
+    /// file URLs (screenshot apps, copy-as-image utilities) do not.
+    static func isFinderFileCopy(_ pasteboard: NSPasteboard) -> Bool {
+        guard pasteboard.types?.contains(.fileURL) == true else { return false }
+        let finderMarkers: Set<String> = [
+            "com.apple.finder.noderef",
+            "com.apple.finder.node",
+            "fndf",
+        ]
+        return pasteboard.types?.contains { finderMarkers.contains($0.rawValue) } == true
     }
 
     /// Returns the file URLs on the pasteboard (FileDropList equivalent),
