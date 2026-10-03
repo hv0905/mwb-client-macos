@@ -213,6 +213,64 @@ final class InputInjectionTests: XCTestCase {
                 "injected \(event.type) must carry a nonzero event number (kCGMouseEventNumber)")
         }
     }
+
+    // MARK: - Click state synthesis
+
+    func testClickCountAdvancesWithinDistanceAndTimeWindow() {
+        let injection = makeInjection()
+
+        // Physical double click: down, up, down at nearly the same point.
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonUp.rawValue))
+        XCTAssertEqual(injection.currentClickCount(for: .left), 1)
+
+        injection.injectMouse(MouseData(x: 60001, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        XCTAssertEqual(injection.currentClickCount(for: .left), 2, "second press at the same point must count as a double click")
+    }
+
+    func testClickCountResetsWhenPositionMovesAway() {
+        let injection = makeInjection()
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonUp.rawValue))
+
+        // ~146 points away (65535 space spans 1920 points): a different target.
+        injection.injectMouse(MouseData(x: 65000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        XCTAssertEqual(injection.currentClickCount(for: .left), 1, "a press on a different target starts a new chain")
+    }
+
+    func testClickCountResetsAfterDoubleClickInterval() {
+        let injection = makeInjection()
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonUp.rawValue))
+
+        // Slow presses beyond the system double-click interval stay single.
+        let interval = Double(NSEvent.doubleClickInterval)
+        Thread.sleep(forTimeInterval: interval + 0.1)
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        XCTAssertEqual(injection.currentClickCount(for: .left), 1)
+    }
+
+    func testClickChainsAreTrackedPerButton() {
+        let injection = makeInjection()
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonUp.rawValue))
+
+        // A quick right press must not extend the left-button chain.
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.rButtonDown.rawValue))
+        XCTAssertEqual(injection.currentClickCount(for: .right), 1)
+        XCTAssertEqual(injection.currentClickCount(for: .left), 1)
+    }
+
+    func testResetClearsClickChains() {
+        let injection = makeInjection()
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonUp.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        XCTAssertEqual(injection.currentClickCount(for: .left), 2)
+
+        injection.reset()
+        XCTAssertEqual(injection.currentClickCount(for: .left), 1)
+    }
 }
 
 // MARK: - Test event tap

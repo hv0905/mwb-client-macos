@@ -40,6 +40,52 @@ final class InputInjection {
     /// exceed this value, coordinates represent a relative pixel offset.
     private static let moveMouseRelative: Int32 = 100_000
 
+    // MARK: - Click state synthesis
+
+    /// Per-button click-chain state (deskflow/Synergy approach). macOS does
+    /// not compute click counts for injected events — apps read
+    /// `kCGMouseEventClickState` straight from each event — so we track press
+    /// timing and position ourselves.
+    private struct ClickTracker {
+        var count: Int64 = 1
+        var lastPress: ContinuousClock.Instant?
+        /// Position of the first (single) click in the current chain.
+        var anchor: CGPoint = .zero
+    }
+
+    private var clickTrackers: [CGMouseButton: ClickTracker] = [:]
+
+    /// Distance (points) within which two presses extend the same click
+    /// chain. Tolerant of hand jitter forwarded by the sender (deskflow uses
+    /// sqrt(2); the extra headroom keeps remote double-clicks reliable).
+    private static let clickChainDistance: CGFloat = 8.0
+
+    /// Advances the click chain for a button press and returns the new click
+    /// state (1 = single, 2 = double, 3 = triple, ...).
+    private func advanceClickState(button: CGMouseButton, at position: CGPoint) -> Int64 {
+        let now = ContinuousClock().now
+        var tracker = clickTrackers[button] ?? ClickTracker()
+
+        let interval = Duration.seconds(NSEvent.doubleClickInterval)
+        if let lastPress = tracker.lastPress,
+           lastPress.duration(to: now) <= interval,
+           hypot(position.x - tracker.anchor.x, position.y - tracker.anchor.y) <= Self.clickChainDistance {
+            tracker.count += 1
+        } else {
+            tracker.count = 1
+            tracker.anchor = position
+        }
+        tracker.lastPress = now
+        clickTrackers[button] = tracker
+        return tracker.count
+    }
+
+    /// The click state a release event must carry: the same value as its
+    /// matching press (mouse-down and mouse-up pairs share the click state).
+    func currentClickCount(for button: CGMouseButton) -> Int64 {
+        clickTrackers[button]?.count ?? 1
+    }
+
     // MARK: - Keyboard state
 
     /// macOS keycodes for the modifier keys handled via `.flagsChanged` synthesis.
@@ -145,13 +191,13 @@ final class InputInjection {
             postMouseButtonEvent(.leftMouseUp, at: target)
         case .rButtonDown:
             if rightDown {
-                postMouseButtonEvent(.rightMouseUp, at: target)
+                postMouseButtonEvent(.rightMouseUp, at: target, button: .right)
             }
             rightDown = true
-            postMouseButtonEvent(.rightMouseDown, at: target)
+            postMouseButtonEvent(.rightMouseDown, at: target, button: .right)
         case .rButtonUp:
             rightDown = false
-            postMouseButtonEvent(.rightMouseUp, at: target)
+            postMouseButtonEvent(.rightMouseUp, at: target, button: .right)
         case .mButtonDown:
             if otherDown {
                 postMouseButtonEvent(.otherMouseUp, at: target, button: .center)
@@ -211,6 +257,7 @@ final class InputInjection {
 
         event.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx))
         event.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy))
+        setClickStateIfNeeded(event, type: type)
         event.post(tap: .cghidEventTap)
 
         lastPosition = target
@@ -238,6 +285,7 @@ final class InputInjection {
 
         event.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx))
         event.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy))
+        setClickStateIfNeeded(event, type: type)
         event.post(tap: .cghidEventTap)
 
         lastPosition = target
@@ -268,8 +316,24 @@ final class InputInjection {
             event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
         }
 
+        // Advance the chain on press; the paired release carries the same state.
+        let isPress = type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown
+        let clickState = isPress
+            ? advanceClickState(button: button, at: location)
+            : currentClickCount(for: button)
+        event.setIntegerValueField(.mouseEventClickState, value: clickState)
+
         event.post(tap: .cghidEventTap)
         lastPosition = location
+    }
+
+    /// Drag events carry the click state of the held button (e.g. word
+    /// selection drags after a double-click); plain moves keep the default.
+    private func setClickStateIfNeeded(_ event: CGEvent, type: CGEventType) {
+        guard type == .leftMouseDragged || type == .rightMouseDragged || type == .otherMouseDragged else {
+            return
+        }
+        event.setIntegerValueField(.mouseEventClickState, value: currentClickCount(for: Self.button(for: type)))
     }
 
     /// Converts a raw MWB wheel delta (multiples of 120) to macOS pixel scroll
@@ -470,5 +534,6 @@ final class InputInjection {
         releaseAllMouseButtons()
         lastPosition = .zero
         needsWarp = true
+        clickTrackers.removeAll()
     }
 }
