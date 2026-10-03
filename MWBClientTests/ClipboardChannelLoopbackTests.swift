@@ -252,4 +252,103 @@ final class ClipboardChannelLoopbackTests: XCTestCase {
         // Clean up the file the channel wrote to Application Support.
         try? FileManager.default.removeItem(at: receivedURL)
     }
+
+    // MARK: - Clipboard change during a transfer
+
+    /// Two distinct temp files with different contents.
+    private func makeTempFile(byteCount: Int, seed: UInt8) throws -> (url: URL, data: Data) {
+        var data = Data()
+        for i in 0..<byteCount {
+            data.append(UInt8(truncatingIfNeeded: i &* Int(seed)))
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mwb-loopback-\(UUID().uuidString).bin")
+        try data.write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return (url, data)
+    }
+
+    func testClipboardChangeDuringTransferServesAnIntactFile() async throws {
+        let (server, port) = try await startServer()
+        let before = receivedDirListing()
+        let (url1, data1) = try makeTempFile(byteCount: 4_000_003, seed: 13)
+        let (url2, data2) = try makeTempFile(byteCount: 2_000_003, seed: 7)
+        await server.setPendingData(.file(url1))
+
+        let client = await makeClient(port: port)
+        let box = SendableBox<Data>()
+        let received = XCTestExpectation(description: "file received")
+        await client.setCallbacks(
+            onReceivedText: { _ in XCTFail("unexpected text received") },
+            onReceivedImage: { _ in XCTFail("unexpected image received") },
+            onReceivedFile: { url, _ in
+                box.set((try? Data(contentsOf: url)) ?? Data())
+                try? FileManager.default.removeItem(at: url)
+                received.fulfill()
+            },
+            onConnectionAccepted: nil)
+
+        // Start the pull, then swap the staged data while the transfer is
+        // running. Whether the swap lands before, during, or after the
+        // in-flight serve, the received file must be one of the two files
+        // INTACT — never a truncated or mixed body.
+        let pullTask = Task { await client.pull(postAction: .other) }
+        await server.setPendingData(.file(url2))
+        await pullTask.value
+        await fulfillment(of: [received], timeout: 10.0)
+
+        let body = try XCTUnwrap(box.get())
+        let matchesFile1 = body == data1
+        let matchesFile2 = body == data2
+        XCTAssertTrue(matchesFile1 || matchesFile2, "received a corrupted body")
+
+        let newFiles = receivedDirListing().subtracting(before)
+        XCTAssertTrue(
+            newFiles.filter { $0.contains(".partial") }.isEmpty,
+            "staging leftovers: \(newFiles)")
+    }
+
+    func testLatestStagedDataWinsOnSubsequentPull() async throws {
+        let (server, port) = try await startServer()
+        let before = receivedDirListing()
+        let (url1, data1) = try makeTempFile(byteCount: 1_000_003, seed: 11)
+        let (url2, data2) = try makeTempFile(byteCount: 1_000_007, seed: 3)
+
+        let client = await makeClient(port: port)
+        let box = SendableBox<Data>()
+        await client.setCallbacks(
+            onReceivedText: { _ in XCTFail("unexpected text received") },
+            onReceivedImage: { _ in XCTFail("unexpected image received") },
+            onReceivedFile: { url, _ in
+                box.set((try? Data(contentsOf: url)) ?? Data())
+                try? FileManager.default.removeItem(at: url)
+            },
+            onConnectionAccepted: nil)
+
+        // Second pull below reuses the same box.
+        // pull() only returns after the receive path has awaited the
+        // onReceivedFile callback, so the box is settled by then.
+        await server.setPendingData(.file(url1))
+        await client.pull(postAction: .other)
+        XCTAssertEqual(box.get(), data1)
+
+        await server.setPendingData(.file(url2))
+        await client.pull(postAction: .other)
+        XCTAssertEqual(box.get(), data2)
+
+        let newFiles = receivedDirListing().subtracting(before)
+        XCTAssertTrue(
+            newFiles.filter { $0.contains(".partial") }.isEmpty,
+            "staging leftovers: \(newFiles)")
+    }
+
+    /// No NEW staging files may linger in the receiver directory after a
+    /// finished transfer (interrupted transfers remove theirs on failure).
+    /// Snapshot-based: the real directory may contain historical files from
+    /// actual usage.
+    private func receivedDirListing() -> Set<String> {
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MWBClient/Received", isDirectory: true)
+        return Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+    }
 }

@@ -168,6 +168,12 @@ actor ClipboardChannel {
 
     // MARK: - Pending data staging
 
+    /// Replaces the data staged for the next pull/push. Replacing staged
+    /// data while a transfer is already in flight does NOT affect it:
+    /// `serveFile` streams from a path captured when the serve started and
+    /// never re-reads `pendingData`, so a mid-transfer clipboard change can
+    /// only redirect the NEXT transfer (latest copy wins), never truncate or
+    /// corrupt the one on the wire.
     func setPendingData(_ data: PendingData?) {
         pendingData = data
     }
@@ -672,8 +678,12 @@ actor ClipboardChannel {
         }
     }
 
-    /// Writes a received file to disk via a `.partial` staging file and an
-    /// atomic move. Destination depends on the post action:
+    /// Writes a received file to disk via a hidden unique `.{uuid}.partial`
+    /// staging file and an atomic move (reference `ReceivedDestinationFile`),
+    /// so an interrupted transfer never leaves a visible partial file and
+    /// never touches the destination. The pasteboard is only handed the
+    /// destination URL after the body matched the advertised size exactly.
+    /// Destination depends on the post action:
     /// `.desktop` → `~/Desktop/MouseWithoutBorders/<name>`,
     /// otherwise `~/Library/Application Support/MWBClient/Received/<name>`.
     private func receiveFile(
@@ -695,7 +705,7 @@ actor ClipboardChannel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let destination = folder.appendingPathComponent(basename)
-        let stagingURL = folder.appendingPathComponent(basename + ".partial")
+        let stagingURL = folder.appendingPathComponent(".\(UUID().uuidString).partial")
         // Removes the staging file when the transfer fails; a no-op after a
         // successful move.
         defer { try? FileManager.default.removeItem(at: stagingURL) }
