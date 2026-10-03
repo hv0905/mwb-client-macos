@@ -137,6 +137,10 @@ final class AppCoordinator {
         let port = MWBConstants.inputPort
         let machineName = settings.machineName
         let screenSize = ScreenInfo.mainScreenSizeUInt16
+        // One dedup window across both receive paths: Windows sends every
+        // packet over all sockets to this machine (Common.SkSend), so the
+        // same packet ID can arrive via NetworkManager and ServerListener.
+        let dedupStore = SharedPackageDeduplicator()
 
         // --- Create subsystems ---
 
@@ -147,7 +151,8 @@ final class AppCoordinator {
             machineID: machineID,
             machineName: machineName,
             screenWidth: screenSize.width,
-            screenHeight: screenSize.height
+            screenHeight: screenSize.height,
+            dedup: dedupStore
         )
 
         let cm = ClipboardManager(
@@ -171,7 +176,8 @@ final class AppCoordinator {
             machineName: machineName,
             screenWidth: screenSize.width,
             screenHeight: screenSize.height,
-            settings: settings
+            settings: settings,
+            dedup: dedupStore
         )
 
         networkManager = nm
@@ -838,6 +844,7 @@ final class AppCoordinator {
         case .hideMouse:
             // We lost control: release everything the remote held down.
             inputInjection.releaseAllKeys()
+            inputInjection.releaseAllMouseButtons()
 
         case .machineSwitched:
             // We gained control: pull the remote's large clipboard data if it
@@ -955,6 +962,7 @@ final class AppCoordinator {
 
         // Flush any modifiers the Windows side still had held down.
         inputInjection.releaseAllKeys()
+        inputInjection.releaseAllMouseButtons()
 
         // Pull the remote's large clipboard data if it announced one recently.
         pullIfFreshBeat()

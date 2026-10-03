@@ -30,7 +30,7 @@ actor ServerListener {
     private var listener: NWListener?
     private var connectionTasks: [UInt32: Task<Void, Never>] = [:]
     private var connections: [UInt32: (NWConnection, MWBCrypto, UInt32)] = [:]
-    private var dedup = PackageDeduplicator()
+    private let dedup: SharedPackageDeduplicator
     private var nextPacketID: UInt32 = UInt32.random(in: 1..<0x7FFFFFFF)
 
     // MARK: Callbacks
@@ -63,7 +63,8 @@ actor ServerListener {
         machineName: String = Host.current().localizedName ?? "Mac",
         screenWidth: UInt16 = UInt16(NSScreen.main?.frame.width ?? 1920),
         screenHeight: UInt16 = UInt16(NSScreen.main?.frame.height ?? 1080),
-        settings: SettingsStore
+        settings: SettingsStore,
+        dedup: SharedPackageDeduplicator = SharedPackageDeduplicator()
     ) {
         self.port = port
         self.securityKey = securityKey
@@ -72,6 +73,7 @@ actor ServerListener {
         self.screenWidth = screenWidth
         self.screenHeight = screenHeight
         self.settings = settings
+        self.dedup = dedup
     }
 
     // MARK: Start / Stop
@@ -603,13 +605,9 @@ actor ServerListener {
     private func dispatchPacket(_ packet: MWBPacket) {
         guard let type = packet.packageType else { return }
 
-        // Skip dedup for certain packet types (per PowerToys Receiver.cs)
-        let exemptFromDedup: Set<PackageType> = [.handshake, .handshakeAck, .clipboardText, .clipboardImage]
-        if !exemptFromDedup.contains(type) {
-            if dedup.isDuplicate(packet.id) {
-                mwbDebug(MWBLog.network, "ServerListener dedup: dropping duplicate packet id=\(packet.id)")
-                return
-            }
+        if dedup.isDuplicate(type: type, id: packet.id) {
+            mwbDebug(MWBLog.network, "ServerListener dedup: dropping duplicate packet id=\(packet.id)")
+            return
         }
 
         switch type {

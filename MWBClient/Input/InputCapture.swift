@@ -587,7 +587,7 @@ final class InputCapture {
 
     for (bit, keycode) in held where flags.contains(bit) {
       flags.remove(bit)
-      guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keycode, keyDown: false) else {
+      guard let event = CGEvent(keyboardEventSource: MWBEventSource.shared, virtualKey: keycode, keyDown: false) else {
         continue
       }
       event.type = .flagsChanged

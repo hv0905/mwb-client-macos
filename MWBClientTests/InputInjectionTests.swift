@@ -1,3 +1,4 @@
+import ApplicationServices
 import CoreGraphics
 import XCTest
 @testable import MWBClient
@@ -126,4 +127,196 @@ final class InputInjectionTests: XCTestCase {
         XCTAssertEqual(InputInjection.scrollPixels(delta: -120, invert: true), 3)
         XCTAssertEqual(InputInjection.scrollPixels(delta: 0, invert: true), 0)
     }
+
+    // MARK: - Mouse button release on loss of control
+
+    /// Maps virtual (60000, 60000) to a quiet point on a 1920x1080 logical
+    /// screen: the injected down/up pairs click a harmless desktop area away
+    /// from the Dock and menu bar.
+    private func makeInjection() -> InputInjection {
+        let injection = InputInjection()
+        injection.screenBoundsProvider = { CGRect(x: 0, y: 0, width: 1920, height: 1080) }
+        return injection
+    }
+
+    func testResetReleasesHeldMouseButtons() {
+        let injection = makeInjection()
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        XCTAssertTrue(injection.leftDown)
+
+        // reset() models connection loss / crossing end while the button is
+        // held: the sender never delivers the mouse-up (reference
+        // ReleaseAllKeys is keyboard-only), so we must self-release.
+        injection.reset()
+        XCTAssertFalse(injection.leftDown)
+    }
+
+    func testReleaseAllMouseButtonsClearsAllButtons() {
+        let injection = makeInjection()
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.rButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.mButtonDown.rawValue))
+        XCTAssertTrue(injection.leftDown)
+        XCTAssertTrue(injection.rightDown)
+        XCTAssertTrue(injection.otherDown)
+
+        injection.releaseAllMouseButtons()
+        XCTAssertFalse(injection.leftDown)
+        XCTAssertFalse(injection.rightDown)
+        XCTAssertFalse(injection.otherDown)
+    }
+
+    /// A second LBUTTONDOWN with no LBUTTONUP in between (lost packet,
+    /// machine switch, or sender-swallowed up) must resynchronize the stream
+    /// by injecting the missing mouse-up before the new mouse-down. Injected
+    /// events must carry a nonzero event number (kCGMouseEventNumber, assigned
+    /// by the window server from the shared CGEventSource on injection) so
+    /// the macOS gesture stack can bind them.
+    func testStaleButtonDownInjectsMissingUpAndCarriesEventNumber() throws {
+        let injection = makeInjection()
+        let target = injection.mapVirtualToScreen(x: 60000, y: 60000)
+
+        // CGEventPost is silently dropped for processes without accessibility
+        // trust; nothing would be observable. The sequence is then verified by
+        // the manual Windows→Mac smoke test instead.
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Test host lacks accessibility trust")
+        }
+
+        let tap = InjectedEventTap()
+        guard tap.start(at: target) else {
+            throw XCTSkip("No event tap available in this environment")
+        }
+        defer { tap.stop() }
+
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+        injection.injectMouse(MouseData(x: 60000, y: 60000, dwFlags: WMMouseMessage.lButtonDown.rawValue))
+
+        let observed = tap.waitForObservations(3)
+        XCTAssertEqual(observed.map(\.type), [.leftMouseDown, .leftMouseUp, .leftMouseDown])
+        for event in observed {
+            XCTAssertNotEqual(
+                event.eventNumber, 0,
+                "injected \(event.type) must carry a nonzero event number (kCGMouseEventNumber)")
+        }
+    }
+}
+
+// MARK: - Test event tap
+
+/// Session-level tap that observes (and when possible suppresses) the events
+/// ``InputInjection`` posts during tests. Mirrors the CGEventTap bridge
+/// pattern used by InputCapture.
+private final class InjectedEventTap {
+    struct Observed {
+        let type: CGEventType
+        let eventNumber: Int64
+    }
+
+    private let lock = NSLock()
+    private var observations: [Observed] = []
+    private var tap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private var suppress = false
+    private var filterPoint = CGPoint.zero
+
+    /// Creates a session tap for left-click events at `point`. Prefers an
+    /// active (suppressing) tap; falls back to listen-only. Returns false if
+    /// neither can be created (e.g. headless session).
+    @discardableResult
+    func start(at point: CGPoint) -> Bool {
+        filterPoint = point
+        injectedEventTapBridge = self
+
+        let mask = (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.leftMouseUp.rawValue)
+
+        var created = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: injectedEventTapCallback,
+            userInfo: nil
+        )
+        suppress = created != nil
+        if created == nil {
+            created = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .listenOnly,
+                eventsOfInterest: mask,
+                callback: injectedEventTapCallback,
+                userInfo: nil
+            )
+        }
+        guard let tap = created else { return false }
+
+        self.tap = tap
+        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        if let source = runLoopSource {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return true
+    }
+
+    func stop() {
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        }
+        tap = nil
+        runLoopSource = nil
+        injectedEventTapBridge = nil
+    }
+
+    /// Pumps the main run loop until `count` observations arrive or the
+    /// timeout elapses, then returns everything observed.
+    func waitForObservations(_ count: Int, timeout: TimeInterval = 2) -> [Observed] {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if lock.withLock({ observations.count }) >= count {
+                break
+            }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return lock.withLock { observations }
+    }
+
+    /// Records the event when it matches the filter point; returns whether
+    /// the event should be suppressed from delivery to apps.
+    func handle(_ event: CGEvent) -> Bool {
+        let location = event.location
+        guard abs(location.x - filterPoint.x) < 1.0, abs(location.y - filterPoint.y) < 1.0 else {
+            return false
+        }
+        let observed = Observed(
+            type: event.type,
+            // kCGMouseEventNumber: assigned from the shared CGEventSource.
+            eventNumber: event.getIntegerValueField(CGEventField(rawValue: 98)!))
+        lock.withLock { observations.append(observed) }
+        return suppress
+    }
+}
+
+/// Bridge for the C callback (closures with captures cannot be C function
+/// pointers).
+nonisolated(unsafe) private var injectedEventTapBridge: InjectedEventTap?
+
+private func injectedEventTapCallback(
+    _ proxy: CGEventTapProxy,
+    _ type: CGEventType,
+    _ event: CGEvent,
+    _ userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        return Unmanaged.passUnretained(event)
+    }
+    guard let bridge = injectedEventTapBridge else {
+        return Unmanaged.passUnretained(event)
+    }
+    return bridge.handle(event) ? nil : Unmanaged.passUnretained(event)
 }

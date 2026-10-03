@@ -74,7 +74,7 @@ actor NetworkManager {
     private var reconnectTask: Task<Void, Never>?
     private var heartbeatMonitorTask: Task<Void, Never>?
     private var intentionalDisconnect = false
-    private var dedup = PackageDeduplicator()
+    private let dedup: SharedPackageDeduplicator
     private var nextPacketID: UInt32 = UInt32.random(in: 1..<0x7FFFFFFF)
 
     // MARK: Heartbeat Timeout Tracking
@@ -128,7 +128,8 @@ actor NetworkManager {
         machineID: MachineID,
         machineName: String = Host.current().localizedName ?? "Mac",
         screenWidth: UInt16 = UInt16(NSScreen.main?.frame.width ?? 1920),
-        screenHeight: UInt16 = UInt16(NSScreen.main?.frame.height ?? 1080)
+        screenHeight: UInt16 = UInt16(NSScreen.main?.frame.height ?? 1080),
+        dedup: SharedPackageDeduplicator = SharedPackageDeduplicator()
     ) {
         self.host = host
         self.port = port
@@ -137,6 +138,7 @@ actor NetworkManager {
         self.localMachineName = machineName
         self.screenWidth = screenWidth
         self.screenHeight = screenHeight
+        self.dedup = dedup
         self.crypto = MWBCrypto(securityKey: securityKey)
         self.magicHash = crypto.get24BitHash()
         self.stateContinuation = _stateStream.continuation
@@ -189,7 +191,6 @@ actor NetworkManager {
         receiveTask = nil
         connection?.cancel()
         connection = nil
-        dedup.reset()
         updateState(.disconnected)
     }
 
@@ -563,13 +564,9 @@ actor NetworkManager {
         if packet.src != .none && packet.src != .all && packet.src != machineID {
             peerMachineID = packet.src
         }
-        // Skip dedup for certain packet types (per PowerToys Receiver.cs)
-        let exemptFromDedup: Set<PackageType> = [.handshake, .handshakeAck, .clipboardText, .clipboardImage]
-        if !exemptFromDedup.contains(type) {
-            if dedup.isDuplicate(packet.id) {
-                mwbDebug(MWBLog.network, "Dedup: dropping duplicate packet id=\(packet.id)")
-                return
-            }
+        if dedup.isDuplicate(type: type, id: packet.id) {
+            mwbDebug(MWBLog.network, "Dedup: dropping duplicate packet id=\(packet.id)")
+            return
         }
 
         // Track heartbeat timestamp for timeout monitoring

@@ -2,6 +2,16 @@ import AppKit
 import CoreGraphics
 import os.log
 
+/// Shared source for all MWB-injected events. A persistent source gives
+/// posted events a nonzero event number and source context, so the macOS
+/// gesture stack can bind them into event streams; the combined-session
+/// state also synthesizes click counts (double-click) across injections.
+enum MWBEventSource {
+    // CGEventSource is not Sendable; it is created once and only read here,
+    // so unchecked sharing is safe.
+    nonisolated(unsafe) static let shared = CGEventSource(stateID: .combinedSessionState)
+}
+
 /// Injects mouse and keyboard events into macOS via CGEvent.
 ///
 /// Maps MWB virtual desktop coordinates (0-65535) to local NSScreen
@@ -22,9 +32,9 @@ final class InputInjection {
     private var needsWarp = true
 
     /// Currently held mouse buttons, used to type move events as drags.
-    private var leftDown = false
-    private var rightDown = false
-    private var otherDown = false
+    private(set) var leftDown = false
+    private(set) var rightDown = false
+    private(set) var otherDown = false
 
     /// PowerToys MOVE_MOUSE_RELATIVE threshold. When |X| and |Y| both
     /// exceed this value, coordinates represent a relative pixel offset.
@@ -115,18 +125,29 @@ final class InputInjection {
         case .mouseMove:
             handleMouseMove(to: target)
         case .lButtonDown:
+            if leftDown {
+                // The paired mouse-up was lost (machine switch, network gap,
+                // or the sender swallowing it); resync before a new stream.
+                postMouseButtonEvent(.leftMouseUp, at: target)
+            }
             leftDown = true
             postMouseButtonEvent(.leftMouseDown, at: target)
         case .lButtonUp:
             leftDown = false
             postMouseButtonEvent(.leftMouseUp, at: target)
         case .rButtonDown:
+            if rightDown {
+                postMouseButtonEvent(.rightMouseUp, at: target)
+            }
             rightDown = true
             postMouseButtonEvent(.rightMouseDown, at: target)
         case .rButtonUp:
             rightDown = false
             postMouseButtonEvent(.rightMouseUp, at: target)
         case .mButtonDown:
+            if otherDown {
+                postMouseButtonEvent(.otherMouseUp, at: target, button: .center)
+            }
             otherDown = true
             postMouseButtonEvent(.otherMouseDown, at: target, button: .center)
         case .mButtonUp:
@@ -171,7 +192,7 @@ final class InputInjection {
         let type = Self.moveEventType(left: leftDown, right: rightDown, other: otherDown)
 
         guard let event = CGEvent(
-            mouseEventSource: nil,
+            mouseEventSource: MWBEventSource.shared,
             mouseType: type,
             mouseCursorPosition: target,
             mouseButton: Self.button(for: type)
@@ -198,7 +219,7 @@ final class InputInjection {
         let type = Self.moveEventType(left: leftDown, right: rightDown, other: otherDown)
 
         guard let event = CGEvent(
-            mouseEventSource: nil,
+            mouseEventSource: MWBEventSource.shared,
             mouseType: type,
             mouseCursorPosition: target,
             mouseButton: Self.button(for: type)
@@ -225,7 +246,7 @@ final class InputInjection {
         }
 
         guard let event = CGEvent(
-            mouseEventSource: nil,
+            mouseEventSource: MWBEventSource.shared,
             mouseType: type,
             mouseCursorPosition: location,
             mouseButton: button
@@ -262,7 +283,7 @@ final class InputInjection {
         let pixelDelta = Self.scrollPixels(delta: delta, invert: CachedSettings.invertRemoteScroll)
 
         guard let event = CGEvent(
-            scrollWheelEvent2Source: nil,
+            scrollWheelEvent2Source: MWBEventSource.shared,
             units: .pixel,
             wheelCount: 1,
             wheel1: horizontal ? pixelDelta : -pixelDelta,
@@ -339,7 +360,7 @@ final class InputInjection {
         }
 
         guard let event = CGEvent(
-            keyboardEventSource: nil,
+            keyboardEventSource: MWBEventSource.shared,
             virtualKey: keycode,
             keyDown: !data.isKeyUp
         ) else {
@@ -371,7 +392,7 @@ final class InputInjection {
             "Modifier transition: keycode \(String(format: "0x%02X", keycode)) \(keyDown ? "down" : "up"), held=[\(held)], capsLock=\(capsLockOn)")
 
         guard let event = CGEvent(
-            keyboardEventSource: nil,
+            keyboardEventSource: MWBEventSource.shared,
             virtualKey: keycode,
             keyDown: keyDown
         ) else {
@@ -399,6 +420,26 @@ final class InputInjection {
         }
     }
 
+    /// Posts synthetic mouse-ups for every button this injector left held down.
+    /// Mirrors ``releaseAllKeys()``: called when this machine loses control so
+    /// the window server button state is not left stuck. The reference
+    /// implementation never sends mouse-ups on machine switch (its
+    /// `ReleaseAllKeys` is keyboard-only), so the receiver must self-release.
+    func releaseAllMouseButtons() {
+        if leftDown {
+            postMouseButtonEvent(.leftMouseUp, at: lastPosition)
+            leftDown = false
+        }
+        if rightDown {
+            postMouseButtonEvent(.rightMouseUp, at: lastPosition)
+            rightDown = false
+        }
+        if otherDown {
+            postMouseButtonEvent(.otherMouseUp, at: lastPosition, button: .center)
+            otherDown = false
+        }
+    }
+
     // MARK: - Reset
 
     /// Resets the injection state.
@@ -407,6 +448,9 @@ final class InputInjection {
     /// so the next incoming event will trigger a cursor warp.
     func reset() {
         releaseAllKeys()
+        // Release buttons before clearing lastPosition: the synthetic ups
+        // must carry the last injected position.
+        releaseAllMouseButtons()
         lastPosition = .zero
         needsWarp = true
     }
