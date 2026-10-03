@@ -149,4 +149,15 @@ final class ClipboardFormatTests: XCTestCase {
         let noNumber = "abc*text".data(using: .utf16LittleEndian)! + Data(count: 1024 - 16)
         XCTAssertNil(ClipboardChannel.parseHeader(noNumber))
     }
+
+    func testBaseFileNameSplitsWindowsAndPosixSeparators() {
+        // The reference sender transmits the full source path in the header.
+        XCTAssertEqual(
+            ClipboardChannel.baseFileName(of: "D:\\OneDrive - Aiursoft\\cg\\69456412_p0.png"),
+            "69456412_p0.png")
+        XCTAssertEqual(ClipboardChannel.baseFileName(of: "/Users/edgeneko/Pictures/img.png"), "img.png")
+        XCTAssertEqual(ClipboardChannel.baseFileName(of: "file.png"), "file.png")
+        XCTAssertEqual(ClipboardChannel.baseFileName(of: "C:\\dir\\sub\\"), "sub")
+        XCTAssertEqual(ClipboardChannel.baseFileName(of: "plain"), "plain")
+    }
 }

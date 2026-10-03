@@ -1,0 +1,57 @@
+import XCTest
+@testable import MWBClient
+
+/// Proves the clipboard poll priority: a Finder-style file copy (only a file
+/// URL on the pasteboard) must fall through to the file branch, never be
+/// loaded as an image — mirroring the reference, where a FileDropList never
+/// takes the CF_BITMAP branch. All tests use isolated pasteboards
+/// (`NSPasteboard.withUniqueName()`), never `NSPasteboard.general`.
+final class ClipboardPasteboardPriorityTests: XCTestCase {
+
+    /// A 1×1 PNG written to a temp file, the Finder ⌘C shape (file URL only).
+    private func makeImageFileURL() throws -> URL {
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        let png = try XCTUnwrap(bitmap?.representation(using: .png, properties: [:]))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mwb-pasteboard-\(UUID().uuidString).png")
+        try png.write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testFinderStyleImageFileCopyIsNotInterceptedAsImage() throws {
+        let fileURL = try makeImageFileURL()
+
+        let pasteboard = NSPasteboard.withUniqueName()
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([fileURL as NSURL]))
+
+        // Gate: a file copy is never an image, even though the file itself
+        // contains image data NSImage(pasteboard:) would resolve.
+        XCTAssertNil(ClipboardManager.readImage(from: pasteboard))
+        // The file branch still sees it (FileDropList equivalent).
+        XCTAssertEqual(ClipboardManager.readFiles(from: pasteboard), [fileURL])
+    }
+
+    func testDirectImageDataIsStillReadAsImage() {
+        // An NSImage backed by real pixels (a bare NSImage(size:) has no
+        // representations, so tiffRepresentation would be nil).
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        let cgImage = bitmap?.cgImage
+        let image = cgImage.map { NSImage(cgImage: $0, size: NSSize(width: 2, height: 2)) }
+
+        let pasteboard = NSPasteboard.withUniqueName()
+        pasteboard.clearContents()
+        // Writing an NSImage puts TIFF data on the pasteboard (Preview /
+        // screenshot / browser "Copy Image" shape).
+        XCTAssertTrue(pasteboard.writeObjects([image].compactMap { $0 }))
+
+        XCTAssertNotNil(ClipboardManager.readImage(from: pasteboard))
+    }
+}

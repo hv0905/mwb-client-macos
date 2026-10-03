@@ -645,7 +645,7 @@ actor ClipboardChannel {
         name: String,
         postAction: ClipboardPostAction
     ) async throws -> URL {
-        let basename = (name as NSString).lastPathComponent
+        let basename = Self.baseFileName(of: name)
         let folder: URL
         if postAction == .desktop {
             folder = FileManager.default.homeDirectoryForCurrentUser
@@ -713,6 +713,18 @@ actor ClipboardChannel {
         guard let size = Int64(trimmed[..<star]) else { return nil }
         let name = String(trimmed[trimmed.index(after: star)...])
         return (size, name)
+    }
+
+    /// Final path component of a sender-provided transfer-header path,
+    /// mirroring .NET `Path.GetFileName`: splits on BOTH '\' and '/'. The
+    /// reference sender transmits the full source path (e.g.
+    /// "D:\OneDrive - Aiursoft\cg\x.png" from Windows), while
+    /// NSString.lastPathComponent only splits on '/'.
+    static func baseFileName(of path: String) -> String {
+        guard let last = path.split(whereSeparator: { $0 == "\\" || $0 == "/" }).last else {
+            return path
+        }
+        return String(last)
     }
 
     private func sendHeader(

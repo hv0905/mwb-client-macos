@@ -344,7 +344,7 @@ actor ClipboardManager {
             return
         }
 
-        if syncImages, let imageData = readImageFromPasteboard() {
+        if syncImages, let imageData = Self.readImage(from: pasteboard) {
             if imageData.count > maxClipboardDataSize {
                 mwbInfo(MWBLog.clipboard, "Staging large image clipboard (\(imageData.count) bytes), sending beat")
                 await channel?.setPendingData(.image(imageData))
@@ -357,7 +357,7 @@ actor ClipboardManager {
             return
         }
 
-        if syncFiles, let urls = readFilesFromPasteboard() {
+        if syncFiles, let urls = Self.readFiles(from: pasteboard) {
             let url = urls[0]
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
@@ -398,8 +398,13 @@ actor ClipboardManager {
         return (text, rtf, html)
     }
 
-    private func readImageFromPasteboard() -> Data? {
-        let pasteboard = NSPasteboard.general
+    /// Returns PNG data for direct image content on the pasteboard, or nil.
+    /// A Finder file copy exposes only a file URL, which NSImage(pasteboard:)
+    /// would otherwise load as an image — the reference never treats a
+    /// FileDropList as CF_BITMAP, so a file URL must fall through to the file
+    /// branch. Static + parameterized for isolated-pasteboard testing.
+    static func readImage(from pasteboard: NSPasteboard) -> Data? {
+        guard pasteboard.types?.contains(.fileURL) != true else { return nil }
         guard let image = NSImage(pasteboard: pasteboard) else {
             return nil
         }
@@ -418,9 +423,9 @@ actor ClipboardManager {
     }
 
     /// Returns the file URLs on the pasteboard (FileDropList equivalent),
-    /// or nil when the pasteboard holds no file URLs.
-    private func readFilesFromPasteboard() -> [URL]? {
-        let pasteboard = NSPasteboard.general
+    /// or nil when the pasteboard holds no file URLs. Static +
+    /// parameterized for isolated-pasteboard testing.
+    static func readFiles(from pasteboard: NSPasteboard) -> [URL]? {
         guard pasteboard.types?.contains(.fileURL) == true else { return nil }
         guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
               !urls.isEmpty else {
