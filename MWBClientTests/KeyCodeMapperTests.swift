@@ -57,6 +57,45 @@ final class KeyCodeMapperTests: XCTestCase {
         XCTAssertEqual(KeyCodeMapper.macOSToVK(macOSKeycode: 0x00), 0x41)
     }
 
+    // MARK: - Punctuation and numpad mapping
+
+    /// VK_OEM_MINUS maps to kVK_ANSI_Minus (0x1B), not kVK_ISO_Section
+    /// (0x0A), which types §/± on Mac layouts.
+    func testPunctuationMapping() {
+        XCTAssertEqual(KeyCodeMapper.vkToMacOS(vkCode: 0xBD), 0x1B, "VK_OEM_MINUS -> - / _")
+        XCTAssertEqual(KeyCodeMapper.vkToMacOS(vkCode: 0xBB), 0x18, "VK_OEM_PLUS -> = / +")
+        XCTAssertEqual(KeyCodeMapper.macOSToVK(macOSKeycode: 0x1B), 0xBD, "reverse: - -> VK_OEM_MINUS")
+        // kVK_ISO_Section (§) has no Windows equivalent on this table.
+        XCTAssertNil(KeyCodeMapper.macOSToVK(macOSKeycode: 0x0A))
+    }
+
+    /// Numpad digits and operators, including the reverse direction used
+    /// when the Mac controls a Windows machine.
+    func testNumpadMapping() {
+        let expected: [(vk: UInt16, mac: UInt16)] = [
+            (0x60, 0x52), (0x61, 0x53), (0x62, 0x54), (0x63, 0x55), (0x64, 0x56),
+            (0x65, 0x57), (0x66, 0x58), (0x67, 0x59), (0x68, 0x5B), (0x69, 0x5C),
+            (0x6A, 0x43),  // VK_MULTIPLY -> Keypad *
+            (0x6B, 0x45),  // VK_ADD -> Keypad +
+            (0x6D, 0x4E),  // VK_SUBTRACT -> Keypad -
+            (0x6E, 0x41),  // VK_DECIMAL -> Keypad .
+            (0x6F, 0x4B),  // VK_DIVIDE -> Keypad /
+            (0x90, 0x47),  // VK_NUMLOCK -> Keypad Clear
+        ]
+        for pair in expected {
+            XCTAssertEqual(KeyCodeMapper.vkToMacOS(vkCode: pair.vk), pair.mac)
+            XCTAssertEqual(KeyCodeMapper.macOSToVK(macOSKeycode: pair.mac), pair.vk,
+                           "reverse mapping for mac keycode 0x\(String(pair.mac, radix: 16))")
+        }
+    }
+
+    /// Numpad Enter arrives as extended VK_RETURN (LLKHF_EXTENDED, part of
+    /// the Windows extended-key set); the main Enter is not extended.
+    func testNumpadEnterUsesExtendedFlag() {
+        XCTAssertEqual(KeyCodeMapper.vkToMacOS(vkCode: 0x0D, extended: false), 0x24, "main Enter")
+        XCTAssertEqual(KeyCodeMapper.vkToMacOS(vkCode: 0x0D, extended: true), 0x4C, "numpad Enter")
+    }
+
     // MARK: - Option/Command swap
 
     func testSwappedModifierKeycode() {

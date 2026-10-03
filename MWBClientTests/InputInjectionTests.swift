@@ -50,6 +50,19 @@ final class InputInjectionTests: XCTestCase {
         XCTAssertFalse(everything.contains(.maskNumericPad))
     }
 
+    func testKeyEventFlagsAddNumericPadForKeypad() {
+        // Keypad keycodes carry .maskNumericPad like real hardware events.
+        let pad0 = InputInjection.keyEventFlags(keycode: 0x52, held: [], capsLockOn: false)
+        XCTAssertTrue(pad0.contains(.maskNumericPad))
+        // Non-keypad keys never do.
+        let letterA = InputInjection.keyEventFlags(keycode: 0x00, held: [], capsLockOn: false)
+        XCTAssertFalse(letterA.contains(.maskNumericPad))
+        // Keypad state composes with held modifiers.
+        let shifted = InputInjection.keyEventFlags(keycode: 0x45, held: [0x38], capsLockOn: false)
+        XCTAssertTrue(shifted.contains(.maskShift))
+        XCTAssertTrue(shifted.contains(.maskNumericPad))
+    }
+
     func testHeldModifiersTrackInjection() {
         let injection = InputInjection()
 

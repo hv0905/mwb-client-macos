@@ -53,6 +53,14 @@ final class InputInjection {
     /// macOS keycode for Caps Lock.
     static let capsLockKeycode: UInt16 = 0x39
 
+    /// macOS numeric-keypad keycodes. Hardware keypad events always carry
+    /// .maskNumericPad, and apps such as Terminal ignore synthetic keypad
+    /// key events without it, so injected keypad key events must set the flag.
+    static let keypadKeycodes: Set<UInt16> = [
+        0x41, 0x43, 0x45, 0x47, 0x4B, 0x4C, 0x4E,
+        0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5B, 0x5C,
+    ]
+
     /// Modifier keycodes currently held down by injected events.
     private(set) var heldModifiers: Set<UInt16> = []
 
@@ -302,7 +310,8 @@ final class InputInjection {
 
     /// Computes the full CGEventFlags for a modifier state, matching how macOS
     /// reports flags on real hardware events. Never synthesizes Fn or
-    /// numeric-pad state.
+    /// numeric-pad state; keypad *key* events add .maskNumericPad on top via
+    /// ``keyEventFlags(keycode:held:capsLockOn:)``.
     static func modifierFlags(held: Set<UInt16>, capsLockOn: Bool) -> CGEventFlags {
         var flags: CGEventFlags = []
         if held.contains(0x38) || held.contains(0x3C) { flags.insert(.maskShift) }
@@ -310,6 +319,14 @@ final class InputInjection {
         if held.contains(0x3A) || held.contains(0x3D) { flags.insert(.maskAlternate) }
         if held.contains(0x37) || held.contains(0x36) { flags.insert(.maskCommand) }
         if capsLockOn { flags.insert(.maskAlphaShift) }
+        return flags
+    }
+
+    /// Full CGEventFlags for an injected key event: the synthesized modifier
+    /// state plus .maskNumericPad for keypad keycodes (matches hardware).
+    static func keyEventFlags(keycode: UInt16, held: Set<UInt16>, capsLockOn: Bool) -> CGEventFlags {
+        var flags = modifierFlags(held: held, capsLockOn: capsLockOn)
+        if keypadKeycodes.contains(keycode) { flags.insert(.maskNumericPad) }
         return flags
     }
 
@@ -330,7 +347,7 @@ final class InputInjection {
     ///   are swapped after the table lookup (for keyboards laid out
     ///   Ctrl-Win-Alt instead of Ctrl-Opt-Cmd).
     func injectKeyboard(_ data: KeyboardData, swapOptionCommand: Bool = false) {
-        guard var keycode = KeyCodeMapper.vkToMacOS(vkCode: data.vkCode) else {
+        guard var keycode = KeyCodeMapper.vkToMacOS(vkCode: data.vkCode, extended: data.isExtended) else {
             mwbDebug(MWBLog.input, "Inject keyboard: unmapped VK code \(data.vkCode)")
             return
         }
@@ -371,7 +388,7 @@ final class InputInjection {
         // Set the keycode explicitly (redundant with virtualKey but ensures correctness)
         event.setIntegerValueField(.keyboardEventKeycode, value: Int64(keycode))
 
-        event.flags = currentModifierFlags
+        event.flags = Self.keyEventFlags(keycode: keycode, held: heldModifiers, capsLockOn: capsLockOn)
         event.post(tap: .cghidEventTap)
     }
 

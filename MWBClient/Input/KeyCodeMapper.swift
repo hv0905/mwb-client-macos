@@ -95,7 +95,7 @@ enum KeyCodeMapper {
         0x5C: 0x36, // VK_RWIN -> Right Command
 
         // Punctuation (US layout)
-        0xBD: 0x0A, // VK_OEM_MINUS -> -
+        0xBD: 0x1B, // VK_OEM_MINUS -> - / _
         0xBB: 0x18, // VK_OEM_PLUS -> =
         0xDB: 0x21, // VK_OEM_4 -> [
         0xDD: 0x1E, // VK_OEM_6 -> ]
@@ -118,6 +118,12 @@ enum KeyCodeMapper {
         0x67: 0x59, // VK_NUMPAD7
         0x68: 0x5B, // VK_NUMPAD8
         0x69: 0x5C, // VK_NUMPAD9
+        0x6A: 0x43, // VK_MULTIPLY -> Keypad *
+        0x6B: 0x45, // VK_ADD -> Keypad +
+        0x6D: 0x4E, // VK_SUBTRACT -> Keypad -
+        0x6E: 0x41, // VK_DECIMAL -> Keypad .
+        0x6F: 0x4B, // VK_DIVIDE -> Keypad /
+        0x90: 0x47, // VK_NUMLOCK -> Keypad Clear
     ]
 
     private static let macToVK: [UInt16: UInt16] = {
@@ -135,8 +141,11 @@ enum KeyCodeMapper {
         return map
     }()
 
-    static func vkToMacOS(vkCode: UInt16) -> UInt16? {
-        vkToMac[vkCode]
+    static func vkToMacOS(vkCode: UInt16, extended: Bool = false) -> UInt16? {
+        // VK_RETURN from the numeric keypad's Enter carries LLKHF_EXTENDED
+        // (MSDN extended-key set); PowerToys forwards the hook flag verbatim.
+        if vkCode == 0x0D, extended { return 0x4C } // kVK_ANSI_KeypadEnter
+        return vkToMac[vkCode]
     }
 
     static func macOSToVK(macOSKeycode: UInt16) -> UInt16? {
