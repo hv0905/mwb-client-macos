@@ -30,6 +30,7 @@ private enum SettingsKey {
     static let checkForUpdates = "settings.checkForUpdates"
     static let swapOptionCommand = "settings.swapOptionCommand"
     static let invertRemoteScroll = "settings.invertRemoteScroll"
+    static let scrollMultiplier = "settings.scrollMultiplier"
 }
 
 // MARK: - Defaults
@@ -70,6 +71,7 @@ private enum SettingsDefault {
     static let checkForUpdates = true
     static let swapOptionCommand = false
     static let invertRemoteScroll = false
+    static let scrollMultiplier: Double = 1.0
 }
 
 // MARK: - Cached Settings (Hot-Path Optimized)
@@ -85,6 +87,9 @@ enum CachedSettings {
     nonisolated(unsafe) static var blockMouseAtCorners = UserDefaults.standard.bool(forKey: "settings.blockMouseAtCorners")
     nonisolated(unsafe) static var hideMouseAtScreenEdge = UserDefaults.standard.bool(forKey: "settings.hideMouseAtScreenEdge")
     nonisolated(unsafe) static var invertRemoteScroll = UserDefaults.standard.bool(forKey: "settings.invertRemoteScroll")
+    // `double(forKey:)` returns 0 when unset, which would zero out scrolling — check object presence instead.
+    nonisolated(unsafe) static var scrollMultiplier =
+        UserDefaults.standard.object(forKey: "settings.scrollMultiplier") as? Double ?? 1.0
 }
 
 // MARK: - SettingsStore
@@ -249,6 +254,15 @@ final class SettingsStore {
         didSet { UserDefaults.standard.set(disableEasyMouseInFullscreen, forKey: SettingsKey.disableEasyMouseInFullscreen) }
     }
 
+    /// Multiplier applied to scroll events injected from the remote machine.
+    /// 1.0 = Windows default (3 lines per wheel notch). Mac-local scrolling unaffected.
+    var scrollMultiplier: Double {
+        didSet {
+            UserDefaults.standard.set(scrollMultiplier, forKey: SettingsKey.scrollMultiplier)
+            CachedSettings.scrollMultiplier = scrollMultiplier
+        }
+    }
+
     // MARK: - Developer Settings
 
     /// When enabled, verbose debug messages are emitted via os_log for all subsystems.
@@ -306,6 +320,7 @@ final class SettingsStore {
         self.checkForUpdates = defaults.object(forKey: SettingsKey.checkForUpdates) as? Bool ?? SettingsDefault.checkForUpdates
         self.swapOptionCommand = defaults.object(forKey: SettingsKey.swapOptionCommand) as? Bool ?? SettingsDefault.swapOptionCommand
         self.invertRemoteScroll = defaults.object(forKey: SettingsKey.invertRemoteScroll) as? Bool ?? SettingsDefault.invertRemoteScroll
+        self.scrollMultiplier = defaults.object(forKey: SettingsKey.scrollMultiplier) as? Double ?? SettingsDefault.scrollMultiplier
 
         if let storedID = defaults.object(forKey: SettingsKey.machineID) as? Int {
             self.machineID = UInt32(truncatingIfNeeded: storedID)
@@ -345,5 +360,6 @@ final class SettingsStore {
         checkForUpdates = SettingsDefault.checkForUpdates
         swapOptionCommand = SettingsDefault.swapOptionCommand
         invertRemoteScroll = SettingsDefault.invertRemoteScroll
+        scrollMultiplier = SettingsDefault.scrollMultiplier
     }
 }

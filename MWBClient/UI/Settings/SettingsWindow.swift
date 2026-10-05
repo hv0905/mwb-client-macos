@@ -10,6 +10,10 @@ struct SettingsWindow: View {
           .tag(SettingsPage.connection)
         Label("Screen Layout", systemImage: "rectangle.split.2x1")
           .tag(SettingsPage.layout)
+        Label("Keyboard", systemImage: "keyboard")
+          .tag(SettingsPage.keyboard)
+        Label("Mouse", systemImage: "computermouse")
+          .tag(SettingsPage.mouse)
         Label("Clipboard", systemImage: "clipboard")
           .tag(SettingsPage.clipboard)
         Label("Permissions", systemImage: "lock.shield")
@@ -45,6 +49,10 @@ struct SettingsWindow: View {
         ConnectionView()
       case .layout:
         LayoutView()
+      case .keyboard:
+        KeyboardView()
+      case .mouse:
+        MouseView()
       case .clipboard:
         ClipboardView()
       case .permissions:
@@ -82,6 +90,8 @@ struct SettingsWindow: View {
 enum SettingsPage: Hashable {
   case connection
   case layout
+  case keyboard
+  case mouse
   case clipboard
   case permissions
   case advanced

@@ -220,14 +220,19 @@ final class InputInjectionTests: XCTestCase {
     // MARK: - Scroll inversion
 
     func testScrollPixelConversion() {
-        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: false), 3)
-        XCTAssertEqual(InputInjection.scrollPixels(delta: -120, invert: false), -3)
-        XCTAssertEqual(InputInjection.scrollPixels(delta: 240, invert: false), 6)
-        XCTAssertEqual(InputInjection.scrollPixels(delta: 0, invert: false), 0)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: false, multiplier: 1.0), 3)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: -120, invert: false, multiplier: 1.0), -3)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 240, invert: false, multiplier: 1.0), 6)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 0, invert: false, multiplier: 1.0), 0)
         // Inverted flips the direction.
-        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: true), -3)
-        XCTAssertEqual(InputInjection.scrollPixels(delta: -120, invert: true), 3)
-        XCTAssertEqual(InputInjection.scrollPixels(delta: 0, invert: true), 0)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: true, multiplier: 1.0), -3)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: -120, invert: true, multiplier: 1.0), 3)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 0, invert: true, multiplier: 1.0), 0)
+        // Multiplier scales before inversion.
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: false, multiplier: 2.0), 6)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: false, multiplier: 0.5), 1)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: -120, invert: true, multiplier: 3.0), 9)
+        XCTAssertEqual(InputInjection.scrollPixels(delta: 120, invert: false, multiplier: 0.25), 0)
     }
 
     // MARK: - Mouse button release on loss of control

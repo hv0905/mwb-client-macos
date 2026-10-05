@@ -362,9 +362,9 @@ final class InputInjection {
     }
 
     /// Converts a raw MWB wheel delta (multiples of 120) to macOS pixel scroll
-    /// units, optionally inverting the direction.
-    static func scrollPixels(delta: Int32, invert: Bool) -> Int32 {
-        var pixels = Int32((CGFloat(delta) / 120.0) * 3.0)
+    /// units, scaled by ``multiplier`` and optionally inverting the direction.
+    static func scrollPixels(delta: Int32, invert: Bool, multiplier: Double) -> Int32 {
+        var pixels = Int32((CGFloat(delta) / 120.0) * 3.0 * CGFloat(multiplier))
         if invert { pixels = -pixels }
         return pixels
     }
@@ -377,7 +377,10 @@ final class InputInjection {
         // MWB sends +/-120 per notch (WHEEL_DELTA). Convert to pixel scroll.
         // macOS convention: positive = scroll up / scroll left.
         // WHEEL_DELTA positive in MWB = scroll away from user = scroll up (negative Y in macOS).
-        let pixelDelta = Self.scrollPixels(delta: delta, invert: CachedSettings.invertRemoteScroll)
+        let pixelDelta = Self.scrollPixels(
+            delta: delta,
+            invert: CachedSettings.invertRemoteScroll,
+            multiplier: CachedSettings.scrollMultiplier)
 
         guard let event = CGEvent(
             scrollWheelEvent2Source: MWBEventSource.shared,
