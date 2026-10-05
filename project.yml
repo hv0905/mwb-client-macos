@@ -19,6 +19,24 @@ settings:
     MARKETING_VERSION: "b1.1.1"
     CURRENT_PROJECT_VERSION: "1"
 
+schemes:
+  MWBClient:
+    build:
+      targets:
+        MWBClient: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MWBClientTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
 targets:
   MWBClient:
     type: application
