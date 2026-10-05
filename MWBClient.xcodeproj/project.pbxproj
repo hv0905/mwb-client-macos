@@ -18,6 +18,7 @@
 		24E50D5747BFF3E2A7239755 /* MachinePoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3636C262BEECE646EB78B8B5 /* MachinePoolTests.swift */; };
 		2A4B51C885C8AE958B57EEF3 /* ClipboardManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FD5387313A7FCD8B6885B73 /* ClipboardManager.swift */; };
 		2CDE907CDF391E21A7C958D0 /* handshake.bin in Resources */ = {isa = PBXBuildFile; fileRef = C5AACCF218BC814F6EAE9777 /* handshake.bin */; };
+		300D8A2E3A8ED33A50A6F67D /* InputSourceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC19DE95FECEBCD345615D4 /* InputSourceSwitcher.swift */; };
 		3105D04053C137A00417F915 /* NetworkIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADB3C9DAEF8AA27C09D7C1F3 /* NetworkIntegrationTests.swift */; };
 		34D5E78EA0EF050D71D06129 /* LayoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44757A274942A16843F68B9E /* LayoutView.swift */; };
 		3B9391F485D809C445B57579 /* MockByteStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D36EDB6CC5435F8477D715C /* MockByteStream.swift */; };
@@ -111,6 +112,7 @@
 		46932C6CF3981C3B9EB22218 /* CryptoCrossPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoCrossPlatformTests.swift; sourceTree = "<group>"; };
 		491B710D380573EF0C358439 /* MWBPacketTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MWBPacketTests.swift; sourceTree = "<group>"; };
 		4B4462AE53F365CE3387B40E /* ClipboardCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardCodec.swift; sourceTree = "<group>"; };
+		4BC19DE95FECEBCD345615D4 /* InputSourceSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceSwitcher.swift; sourceTree = "<group>"; };
 		4BFCFBA88F96723652ED7FC3 /* ProtocolExtractor.csproj */ = {isa = PBXFileReference; path = ProtocolExtractor.csproj; sourceTree = "<group>"; };
 		4DA5714D75003D2FD578D32A /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		53B665D45733F4493D7A0AAC /* EdgeDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeDetectorTests.swift; sourceTree = "<group>"; };
@@ -285,6 +287,7 @@
 				2B6D67D28EBEA0FA49E5298B /* EdgeDetector.swift */,
 				085ADDFADFBF1882F0D20AE9 /* InputCapture.swift */,
 				A26795837B7EC4F86C491C10 /* InputInjection.swift */,
+				4BC19DE95FECEBCD345615D4 /* InputSourceSwitcher.swift */,
 				FD24509B5BCB183847AFE67F /* KeyCodeMapper.swift */,
 			);
 			path = Input;
@@ -545,6 +548,7 @@
 				1EBA6C5E03D82ABE72BCFF46 /* HeartbeatService.swift in Sources */,
 				711217305E826FC8505F9940 /* InputCapture.swift in Sources */,
 				6FA563E0B55479657E09821E /* InputInjection.swift in Sources */,
+				300D8A2E3A8ED33A50A6F67D /* InputSourceSwitcher.swift in Sources */,
 				06426C1285AA023437E7C852 /* KeyCodeMapper.swift in Sources */,
 				34D5E78EA0EF050D71D06129 /* LayoutView.swift in Sources */,
 				B866ECFC5F27A0CC86BBF1D5 /* LogConsoleView.swift in Sources */,

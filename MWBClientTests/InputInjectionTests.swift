@@ -75,20 +75,109 @@ final class InputInjectionTests: XCTestCase {
         XCTAssertFalse(injection.currentModifierFlags.contains(.maskControl))
     }
 
-    func testCapsLockTogglesPerKeyDown() {
+    // MARK: - Caps Lock tap/hold classification
+
+    private func makeCapsInjection(
+        cjkEnabled: Bool,
+        onToggle: @escaping () -> Void = {}
+    ) -> InputInjection {
         let injection = InputInjection()
-        let capsDown = KeyboardData(vkCode: 0x14, flags: 0)
-        let capsUp = KeyboardData(vkCode: 0x14, flags: LLKHFFlag.up.rawValue)
+        injection.nowProvider = { ContinuousClock.Instant.now }
+        injection.cjkInputSourceEnabled = { cjkEnabled }
+        injection.inputSourceToggle = onToggle
+        // Direct the (unused-in-caps-tests) screen bounds somewhere harmless.
+        injection.screenBoundsProvider = { CGRect(x: 0, y: 0, width: 1920, height: 1080) }
+        return injection
+    }
 
-        injection.injectKeyboard(capsDown)
+    /// Press and release Caps Lock on `injection`, advancing the fake clock
+    /// `holdMS` between down and up.
+    private func pressCaps(_ injection: InputInjection, holdMS: Int64) {
+        var time = ContinuousClock.Instant.now
+        injection.nowProvider = { time }
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: 0))
+        time = time.advanced(by: .milliseconds(holdMS))
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: LLKHFFlag.up.rawValue))
+    }
+
+    func testCapsLockShortPressTogglesInputSourceWhenCJKEnabled() {
+        var toggles = 0
+        let injection = makeCapsInjection(cjkEnabled: true) { toggles += 1 }
+
+        // The input-source toggle is dispatched to the main queue; drain it
+        // before asserting.
+        pressCaps(injection, holdMS: 100)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(
+            injection.currentModifierFlags.contains(.maskAlphaShift),
+            "a short press must toggle the input source, not the caps state")
+        XCTAssertEqual(toggles, 1)
+
+        // Rapid consecutive short presses keep toggling the language.
+        pressCaps(injection, holdMS: 50)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(toggles, 2)
+    }
+
+    func testCapsLockShortPressTogglesCapsWithoutCJK() {
+        let injection = makeCapsInjection(cjkEnabled: false)
+
+        pressCaps(injection, holdMS: 100)
         XCTAssertTrue(injection.currentModifierFlags.contains(.maskAlphaShift))
+        pressCaps(injection, holdMS: 100)
+        XCTAssertFalse(injection.currentModifierFlags.contains(.maskAlphaShift))
+    }
 
-        // Key up must be ignored: the lock state only changes on key down.
-        injection.injectKeyboard(capsUp)
+    func testCapsLockLongPressTogglesCapsEvenWithCJK() {
+        var toggles = 0
+        let injection = makeCapsInjection(cjkEnabled: true) { toggles += 1 }
+
+        // Hold beyond the 1s threshold: caps toggles, language does not.
+        pressCaps(injection, holdMS: 1100)
         XCTAssertTrue(injection.currentModifierFlags.contains(.maskAlphaShift))
+        XCTAssertEqual(toggles, 0)
 
-        // Second key down toggles the lock off.
-        injection.injectKeyboard(capsDown)
+        pressCaps(injection, holdMS: 1100)
+        XCTAssertFalse(injection.currentModifierFlags.contains(.maskAlphaShift))
+    }
+
+    func testCapsLockAutorepeatDoesNotResetHoldTimer() {
+        var toggles = 0
+        let injection = makeCapsInjection(cjkEnabled: true) { toggles += 1 }
+
+        var time = ContinuousClock.Instant.now
+        injection.nowProvider = { time }
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: 0))
+        // Windows autorepeat re-sends key-downs while held; the press must
+        // still be measured from the first key-down.
+        time = time.advanced(by: .milliseconds(400))
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: 0))
+        time = time.advanced(by: .milliseconds(800))
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: 0))
+        time = time.advanced(by: .milliseconds(400))
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: LLKHFFlag.up.rawValue))
+
+        XCTAssertTrue(injection.currentModifierFlags.contains(.maskAlphaShift),
+                      "1.6s total hold is a long press")
+        XCTAssertEqual(toggles, 0)
+    }
+
+    func testCapsLockOrphanKeyUpIgnored() {
+        let injection = makeCapsInjection(cjkEnabled: false)
+
+        // Key-up without a preceding key-down must not toggle anything.
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: LLKHFFlag.up.rawValue))
+        XCTAssertFalse(injection.currentModifierFlags.contains(.maskAlphaShift))
+    }
+
+    func testCapsLockResetDropsPendingPress() {
+        let injection = makeCapsInjection(cjkEnabled: false)
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: 0))
+
+        // Connection loss / crossing end mid-press: the stale key-up after
+        // reset() must not classify against the abandoned key-down.
+        injection.reset()
+        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: LLKHFFlag.up.rawValue))
         XCTAssertFalse(injection.currentModifierFlags.contains(.maskAlphaShift))
     }
 
@@ -110,7 +199,7 @@ final class InputInjectionTests: XCTestCase {
         let injection = InputInjection()
         injection.injectKeyboard(KeyboardData(vkCode: 0xA2, flags: 0))  // VK_LCONTROL
         injection.injectKeyboard(KeyboardData(vkCode: 0x5B, flags: 0))  // VK_LWIN
-        injection.injectKeyboard(KeyboardData(vkCode: 0x14, flags: 0))  // VK_CAPITAL (locks on)
+        pressCaps(injection, holdMS: 1100)  // VK_CAPITAL long press (locks on)
         XCTAssertEqual(injection.heldModifiers.count, 2)
 
         injection.releaseAllKeys()

@@ -114,6 +114,31 @@ final class InputInjection {
     /// the remote machine (matches the reference implementation).
     private var capsLockOn = false
 
+    /// Whether a Caps Lock key-down is currently pending its key-up.
+    private var capsKeyDown = false
+
+    /// When the pending Caps Lock key-down arrived; press duration decides
+    /// short-press (input-source toggle / caps toggle) vs long-press (caps
+    /// toggle) classification.
+    private var capsKeyDownInstant: ContinuousClock.Instant?
+
+    /// Press duration at which a Caps Lock press is a hold (macOS native
+    /// long-press delay is roughly one second).
+    static let capsLockHoldThreshold: Duration = .seconds(1)
+
+    /// Injectable clock for tests (same convention as screenBoundsProvider).
+    var nowProvider: () -> ContinuousClock.Instant = { ContinuousClock().now }
+
+    /// True when the user has a Chinese input source enabled, i.e. short
+    /// Caps Lock presses should toggle Chinese/English instead of case.
+    /// Injectable for tests.
+    var cjkInputSourceEnabled: () -> Bool = { InputSourceSwitcher.cjkInputSourceEnabled() }
+
+    /// Switches the active input source (Chinese <-> ASCII). Injectable for
+    /// tests. TISSelectInputSource wants the main thread, so production
+    /// callers dispatch asynchronously.
+    var inputSourceToggle: () -> Void = { InputSourceSwitcher.toggleCJKAndASCII() }
+
     // MARK: - Coordinate mapping
 
     /// Returns the main display bounds in Quartz (top-left origin) coordinates.
@@ -421,11 +446,7 @@ final class InputInjection {
         }
 
         if keycode == Self.capsLockKeycode {
-            // Caps Lock behaves as a toggle: each key down flips the lock
-            // state; key ups are ignored (matches hardware semantics).
-            guard !data.isKeyUp else { return }
-            capsLockOn.toggle()
-            postFlagsChanged(keycode: keycode, keyDown: true)
+            handleCapsLock(isKeyUp: data.isKeyUp)
             return
         }
 
@@ -454,6 +475,48 @@ final class InputInjection {
 
         event.flags = Self.keyEventFlags(keycode: keycode, held: heldModifiers, capsLockOn: capsLockOn)
         event.post(tap: .cghidEventTap)
+    }
+
+    /// Caps Lock tap/hold classification, mirroring the native macOS behavior
+    /// ("Use Caps Lock key to switch ABC" in Chinese IME setups):
+    /// short press with a Chinese input source enabled toggles Chinese /
+    /// English; short press otherwise toggles caps; a long press (>=
+    /// ``capsLockHoldThreshold``) always toggles caps.
+    ///
+    /// The classification must live here: a spike on this codebase proved
+    /// `CGEventPost`-ed caps events (flagsChanged or keyDown/keyUp pairs,
+    /// short or long) never reach the system's native tap/hold state machine,
+    /// which runs below the CGEvent layer (WindowServer/HID). Known
+    /// limitations: the Caps Lock LED cannot be lit, and a long press
+    /// synthesizes a single transition instead of a held key.
+    ///
+    /// Windows autorepeat re-sends key-downs while the key is held; the
+    /// first key-down wins so the press duration stays anchored.
+    private func handleCapsLock(isKeyUp: Bool) {
+        if isKeyUp {
+            guard capsKeyDown, let start = capsKeyDownInstant else { return }
+            capsKeyDown = false
+            capsKeyDownInstant = nil
+
+            let held = nowProvider() - start
+            if held >= Self.capsLockHoldThreshold {
+                capsLockOn.toggle()
+                postFlagsChanged(keycode: Self.capsLockKeycode, keyDown: true)
+            } else if cjkInputSourceEnabled() {
+                nonisolated(unsafe) let toggle = inputSourceToggle
+                DispatchQueue.main.async {
+                    toggle()
+                }
+            } else {
+                capsLockOn.toggle()
+                postFlagsChanged(keycode: Self.capsLockKeycode, keyDown: true)
+            }
+            return
+        }
+
+        guard !capsKeyDown else { return }
+        capsKeyDown = true
+        capsKeyDownInstant = nowProvider()
     }
 
     /// Posts a well-formed `.flagsChanged` event for a modifier transition.
@@ -529,6 +592,11 @@ final class InputInjection {
     /// so the next incoming event will trigger a cursor warp.
     func reset() {
         releaseAllKeys()
+        // Drop a pending Caps Lock press so a stale key-up (crossing end,
+        // reconnection) is not classified against an abandoned key-down.
+        // capsLockOn survives, matching hardware toggle semantics.
+        capsKeyDown = false
+        capsKeyDownInstant = nil
         // Release buttons before clearing lastPosition: the synthetic ups
         // must carry the last injected position.
         releaseAllMouseButtons()
