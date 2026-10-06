@@ -61,7 +61,7 @@ struct MouseView: View {
               .foregroundStyle(.secondary)
               .monospacedDigit()
           }
-          Slider(value: $settings.scrollMultiplier, in: 0.25...4.0, step: 0.25)
+            Slider(value: $settings.scrollMultiplier, in: 0.25...10.0, step: 0.25)
           Text(
             "Scales how far each scroll wheel event from the Windows machine scrolls. Does not affect your Mac's own mouse and trackpad scrolling."
           )
