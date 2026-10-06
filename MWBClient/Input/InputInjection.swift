@@ -432,13 +432,19 @@ final class InputInjection {
     /// Maps the Windows VK code to a macOS keycode via ``KeyCodeMapper`` and
     /// posts either a key event (carrying the full modifier state in its flags,
     /// so shortcuts like Ctrl+C resolve in the target app) or a well-formed
-    /// `.flagsChanged` event for modifier keys. Unmapped VK codes are silently
-    /// ignored.
+    /// `.flagsChanged` event for modifier keys. Media-key VK codes
+    /// (`0xAD`–`0xB3`) are consumed by ``MediaKeyInjector`` and posted as
+    /// native system-defined media key events, not as CG keycodes. Other
+    /// unmapped VK codes are silently ignored.
     ///
     /// - Parameter swapOptionCommand: When true, Option and Command keycodes
     ///   are swapped after the table lookup (for keyboards laid out
     ///   Ctrl-Win-Alt instead of Ctrl-Opt-Cmd).
     func injectKeyboard(_ data: KeyboardData, swapOptionCommand: Bool = false) {
+        if MediaKeyInjector.inject(data) {
+            return
+        }
+
         guard var keycode = KeyCodeMapper.vkToMacOS(vkCode: data.vkCode, extended: data.isExtended) else {
             mwbDebug(MWBLog.input, "Inject keyboard: unmapped VK code \(data.vkCode)")
             return

@@ -20,6 +20,7 @@
 		2CDE907CDF391E21A7C958D0 /* handshake.bin in Resources */ = {isa = PBXBuildFile; fileRef = C5AACCF218BC814F6EAE9777 /* handshake.bin */; };
 		300D8A2E3A8ED33A50A6F67D /* InputSourceSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC19DE95FECEBCD345615D4 /* InputSourceSwitcher.swift */; };
 		3105D04053C137A00417F915 /* NetworkIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADB3C9DAEF8AA27C09D7C1F3 /* NetworkIntegrationTests.swift */; };
+		31365F6DA9F5913F62CF0AB8 /* MediaKeyInjectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D031020BC9D4698AB72097C /* MediaKeyInjectorTests.swift */; };
 		34D5E78EA0EF050D71D06129 /* LayoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44757A274942A16843F68B9E /* LayoutView.swift */; };
 		3B9391F485D809C445B57579 /* MockByteStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D36EDB6CC5435F8477D715C /* MockByteStream.swift */; };
 		3CDC8B55910D46251D1BA2DA /* KeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EFB2EE72AD4EF93D176CB16 /* KeyboardView.swift */; };
@@ -59,6 +60,7 @@
 		97D6854FF5FF9739321AF909 /* ProtocolExtractor.csproj in Resources */ = {isa = PBXBuildFile; fileRef = 4BFCFBA88F96723652ED7FC3 /* ProtocolExtractor.csproj */; };
 		9D1D66DA3F10E61BAD59583C /* ClipboardChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89AC2734851A16498DABA027 /* ClipboardChannel.swift */; };
 		9E4BD9C371B8B390F491BCFC /* MouseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0380A1AE211A1BA31046926D /* MouseView.swift */; };
+		A373EBFDF9D199543FE906E8 /* MediaKeyInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07866CFEBDB5D31CBFCD9243 /* MediaKeyInjector.swift */; };
 		A74871FF060B77B321E529C2 /* MWBKeyboardData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59334291F885148BC161FCE2 /* MWBKeyboardData.swift */; };
 		B2929940AD3A62597ADCDFC6 /* ProtocolBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E98C9EA00CA537542EE9799 /* ProtocolBinaryTests.swift */; };
 		B866ECFC5F27A0CC86BBF1D5 /* LogConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47E22D738AA3E976CAABEEA /* LogConsoleView.swift */; };
@@ -94,6 +96,7 @@
 /* Begin PBXFileReference section */
 		0066F4E1A3C8CE57C854E639 /* DragDropManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragDropManager.swift; sourceTree = "<group>"; };
 		0380A1AE211A1BA31046926D /* MouseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MouseView.swift; sourceTree = "<group>"; };
+		07866CFEBDB5D31CBFCD9243 /* MediaKeyInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaKeyInjector.swift; sourceTree = "<group>"; };
 		085ADDFADFBF1882F0D20AE9 /* InputCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputCapture.swift; sourceTree = "<group>"; };
 		095C19714D2A757F3E799596 /* ClipboardChannelLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardChannelLoopbackTests.swift; sourceTree = "<group>"; };
 		0B590DE1D1DA01D6B2357AE4 /* magic.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = magic.bin; sourceTree = "<group>"; };
@@ -138,6 +141,7 @@
 		93F3D0296E0F76D9C47BD4AE /* MWBHandshake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MWBHandshake.swift; sourceTree = "<group>"; };
 		989A0826C11AE419D13531ED /* MatrixFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatrixFlags.swift; sourceTree = "<group>"; };
 		9B0CEC22E5C2418C8A31BCA3 /* MachineID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineID.swift; sourceTree = "<group>"; };
+		9D031020BC9D4698AB72097C /* MediaKeyInjectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaKeyInjectorTests.swift; sourceTree = "<group>"; };
 		A1BBC2304145EBEC609D6A75 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A26795837B7EC4F86C491C10 /* InputInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputInjection.swift; sourceTree = "<group>"; };
 		A3CF15F6F4BF38FE160BAE62 /* generate_fixtures.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = generate_fixtures.sh; sourceTree = "<group>"; };
@@ -225,6 +229,7 @@
 				5849C71C3FA6E0AD586C40C7 /* InputLayerTests.swift */,
 				C05A3EC8F2C7EFFCEF203BF0 /* KeyCodeMapperTests.swift */,
 				3636C262BEECE646EB78B8B5 /* MachinePoolTests.swift */,
+				9D031020BC9D4698AB72097C /* MediaKeyInjectorTests.swift */,
 				EB0993BDCE17559BFCB0EEA8 /* MWBClientTests.swift */,
 				3B4E0529638EACDB77913CD9 /* MWBCryptoTests.swift */,
 				65687D9F830641CC72C98325 /* MWBHandshakeTests.swift */,
@@ -293,6 +298,7 @@
 				A26795837B7EC4F86C491C10 /* InputInjection.swift */,
 				4BC19DE95FECEBCD345615D4 /* InputSourceSwitcher.swift */,
 				FD24509B5BCB183847AFE67F /* KeyCodeMapper.swift */,
+				07866CFEBDB5D31CBFCD9243 /* MediaKeyInjector.swift */,
 			);
 			path = Input;
 			sourceTree = "<group>";
@@ -528,6 +534,7 @@
 				FBA6854DA76B9C6D974561F2 /* MWBPacketTests.swift in Sources */,
 				24E50D5747BFF3E2A7239755 /* MachinePoolTests.swift in Sources */,
 				685B0C572FFBF96A95DA9023 /* ManualClock.swift in Sources */,
+				31365F6DA9F5913F62CF0AB8 /* MediaKeyInjectorTests.swift in Sources */,
 				3B9391F485D809C445B57579 /* MockByteStream.swift in Sources */,
 				94CBC90F7D1E72C34D157BE6 /* MockEventSink.swift in Sources */,
 				3105D04053C137A00417F915 /* NetworkIntegrationTests.swift in Sources */,
@@ -570,6 +577,7 @@
 				14477F5DF0DD5ABC011F0BFD /* MachineID.swift in Sources */,
 				89A653556334EAF0D63BA872 /* MachinePool.swift in Sources */,
 				107B8C3251531893EB2709B6 /* MatrixFlags.swift in Sources */,
+				A373EBFDF9D199543FE906E8 /* MediaKeyInjector.swift in Sources */,
 				9E4BD9C371B8B390F491BCFC /* MouseView.swift in Sources */,
 				1159796E4981D19AB5D71171 /* NetworkCallbacks.swift in Sources */,
 				86984B4B9B7BDF070488D91D /* NetworkManager.swift in Sources */,
